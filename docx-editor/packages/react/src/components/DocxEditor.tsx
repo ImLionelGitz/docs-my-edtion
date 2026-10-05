@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /*
  * Copyright (c) 2026 Casual Office. All rights reserved.
  */
@@ -85,7 +86,6 @@ import { restoreNativeCitations } from '../utils/citations';
 import { triggerBrowserDownload, documentBaseName, createDocxBlob } from '../utils/download';
 import { recordRecentFile } from '../utils/recent-files';
 import { openExternal } from '../utils/openExternal';
-import { CommentMarginMarkers } from './CommentMarginMarkers';
 import { useCommentSidebarItems, type CommentCallbacks } from '../hooks/useCommentSidebarItems';
 import { useTrackedChanges } from '../hooks/useTrackedChanges';
 import type { EditorState as PMEditorState } from 'prosemirror-state';
@@ -468,11 +468,6 @@ import { resolveEditorExtensionPlugins, type EditorExtension } from './editorExt
 // Plugin API types
 import type { RenderedDomContext } from '../plugin-api/types';
 
-// E3 — suggesting-mode banner. Yellow stripe above the editor matching
-// Google Docs' visual language; visible only while editing-mode is
-// "suggesting".
-import { SuggestingModeBanner } from './SuggestingModeBanner';
-
 // Building blocks (C6) — saved reusable snippets the user inserts via the
 // Insert menu. Backed by localStorage; PM Slice JSON round-trip.
 import { Slice } from 'prosemirror-model';
@@ -515,6 +510,10 @@ export interface DocxEditorProps {
   documentBuffer?: DocxInput | null;
   /** Pre-parsed document (alternative to documentBuffer) */
   document?: Document | null;
+  
+  /** External menu bar component */
+  myMenuBar?: (oprions: DialogActions) => void | null;
+
   /** Callback when document is saved */
   onSave?: (buffer: ArrayBuffer) => void;
   /** Optional host-provided file deliverer for File → Export (ODT/MD/TXT),
@@ -1292,12 +1291,6 @@ const EDITING_MODES: readonly EditingModeDef[] = [
     descKey: 'editor.editingDescription',
   },
   {
-    value: 'suggesting',
-    labelKey: 'editor.suggesting',
-    icon: 'rate_review',
-    descKey: 'editor.suggestingDescription',
-  },
-  {
     value: 'viewing',
     labelKey: 'editor.viewing',
     icon: 'visibility',
@@ -1753,6 +1746,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   {
     documentBuffer,
     document: initialDocument,
+    myMenuBar,
     onSave,
     onExport,
     onNew,
@@ -1825,11 +1819,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     pluginOverlays,
     pluginSidebarItems,
     pluginRenderedDomContext,
-    renderLogo,
+    
     documentName,
     onDocumentNameChange,
-    documentNameEditable = true,
-    renderTitleBarRight,
     i18n,
     documentLang,
     agentPanel,
@@ -1991,7 +1983,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   // any preset.
   const {
     toolbar: showToolbarEffective,
-    titleBar: showTitleBarEffective,
     menuBar: showMenuBarEffective,
     appShellHidden,
   } = resolveChromeVisibility(chrome, features, showToolbar);
@@ -2197,14 +2188,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     },
     [agentPanel, isAgentPanelControlled]
   );
-
-  // Accessed by the stable recomputeFloatingCommentBtn callback below.
-  // Kept in sync below after that callback is declared.
-  // Floating "add comment" button position (relative to scroll container, null = hidden)
-  const [floatingCommentBtn, setFloatingCommentBtn] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
 
   // Right-click context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -2415,13 +2398,13 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     mgr.buildSchema();
     mgr.initializeRuntime();
     return mgr;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   // Suggestion mode plugin — merged with external plugins
   const suggestionPlugin = useMemo(
     () => createSuggestionModePlugin(editingMode === 'suggesting', author),
-    [] // eslint-disable-line react-hooks/exhaustive-deps
+    []  
   );
   // Feature-veto keymap (docs#289): swallows a disabled feature's keyboard
   // shortcut (e.g. Ctrl+B when `features={{ bold: false }}`). Built once and
@@ -2748,7 +2731,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     // Intentionally exclude `statPrefsForReadability.prefs.readability`
     // from the deps. The toggle effect below uses a meta-tagged
     // transaction to flip enabled without tearing down the plugin.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isBodyPmReady]);
   useEffect(() => {
     if (!isBodyPmReady) return;
@@ -3363,7 +3346,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     return () => {
       setGrammarChecker(null);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
   const handlePreferenceChange = useCallback(
     <K extends keyof EditorPreferences>(key: K, value: EditorPreferences[K]) => {
@@ -3417,7 +3400,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     void restoreNativeBuildingBlocks();
     void restoreNativeCitations();
     // Only on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
   // While the user's choice is 'auto', track OS theme changes live so the
   // chrome flips with the system without a reload.
@@ -3464,7 +3447,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     setIsAddingComment(false);
     setCommentSelectionRange(null);
     setAddCommentYPosition(null);
-    setFloatingCommentBtn(null);
     setHfEditPosition(null);
     setAnchorPositions(EMPTY_ANCHOR_POSITIONS);
     findReplace.setMatches([], 0);
@@ -3657,15 +3639,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   const recomputeFloatingCommentBtn = useCallback(() => {
     const view = pagedEditorRef.current?.getView();
     if (!view) return;
-    if (isAddingCommentRef.current || readOnlyForFloatingBtnRef.current) {
-      setFloatingCommentBtn(null);
-      return;
-    }
-    const { from, to } = view.state.selection;
-    if (from === to) {
-      setFloatingCommentBtn(null);
-      return;
-    }
+    const { from } = view.state.selection;
     const container = scrollContainerRef.current;
     // Use editorColumnRef (the position:relative ancestor that the button is
     // portalled into) — NOT editorContentRef (which scrolls inside the
@@ -3674,15 +3648,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     if (!container || !posContext) return;
     const rawTop = findSelectionYPosition(container, posContext, from);
     if (rawTop == null) return;
-    const pagesEl = container.querySelector('.paged-editor__pages');
-    const pageEl = pagesEl?.querySelector('.layout-page') as HTMLElement | null;
-    const contextRect = posContext.getBoundingClientRect();
-    const rawLeft = pageEl
-      ? pageEl.getBoundingClientRect().right - contextRect.left
-      : posContext.getBoundingClientRect().width / 2 + 408;
-    // The page layout lives inside a zoom-scaled subtree; the button does not.
-    // Divide screen-space deltas by zoom so the button doesn't double-scale.
-    setFloatingCommentBtn({ top: rawTop / state.zoom, left: rawLeft / state.zoom });
   }, [state.zoom]);
   // Keep the readOnly ref used by recomputeFloatingCommentBtn in sync
   readOnlyForFloatingBtnRef.current = readOnly;
@@ -3830,7 +3795,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       }
 
       if (!selectionState) {
-        setFloatingCommentBtn(null);
         setState((prev) => ({
           ...prev,
           selectionFormatting: {},
@@ -4136,14 +4100,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         setFocusMode(false);
       }
 
-      // Mod+Alt+M → start a new comment on the selection (Google Docs
-      // binding). Uses e.code, not e.key, because Option remaps the M key
-      // on macOS. No-op when the selection is empty (handled downstream).
-      if (cmdOrCtrl && e.altKey && !e.shiftKey && e.code === 'KeyM') {
-        e.preventDefault();
-        shortcutActionsRef.current.startComment?.();
-      }
-
       // Mod+/ → keyboard-shortcuts dialog (Google Docs binding).
       if (cmdOrCtrl && !e.shiftKey && !e.altKey && e.key === '/') {
         e.preventDefault();
@@ -4169,8 +4125,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       if (cmdOrCtrl && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
         e.preventDefault();
         const current = editingModeRef.current;
-        const next: EditorMode =
-          current === 'editing' ? 'suggesting' : current === 'suggesting' ? 'viewing' : 'editing';
+        const next: EditorMode = current === 'editing' ? 'viewing' : 'editing';
         setEditingModeRef.current(next);
       }
 
@@ -4361,7 +4316,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     setAddCommentYPosition(yPos);
     setShowCommentsSidebar(true);
     setIsAddingComment(true);
-    setFloatingCommentBtn(null);
   }, []);
 
   // Insert a page break at cursor
@@ -5020,7 +4974,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     apply(history.state?.package);
     apply(agentRef.current?.getDocument()?.package);
     propsEditsRef.current = { ...propsEditsRef.current, ...edits };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   // Commit a File → Properties edit. In collab, route through the shared map so
@@ -5795,7 +5749,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   // memo() effective across every DocxEditor re-render caused by
   // pmState / isDirty / isSaving state flips.
   const _pagedSelectionChangeImplRef = useRef<(from: number, to: number) => void>(() => undefined);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   const _pagedOnSelectionChangeStable = useCallback(
     (from: number, to: number) => _pagedSelectionChangeImplRef.current(from, to),
     []
@@ -6261,10 +6215,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       },
     ];
     if (contextMenu.hasSelection) {
-      items.push({
-        action: 'addComment',
-        label: t('common.comment'),
-      });
       // Quick-translate: instant replace with the last target the
       // user picked. The dialog entry sticks around for picking a
       // different language or seeing the preview.
@@ -6768,7 +6718,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           setAddCommentYPosition(yPos);
           setShowCommentsSidebar(true);
           setIsAddingComment(true);
-          setFloatingCommentBtn(null);
           break;
         }
       }
@@ -9364,7 +9313,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
 
   const commentSidebarItems = useCommentSidebarItems({
     comments,
-    trackedChanges,
+    trackedChanges: [],
     callbacks: stableCallbacks,
     showResolved: showCommentsSidebar,
     isAddingComment: showCommentsSidebar ? isAddingComment : false,
@@ -9477,6 +9426,11 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     overflowAnchor: 'none',
   };
 
+  // wesker 
+  useEffect(() => {
+    myMenuBar?.(dialogActions)
+  }, [])
+
   // Render loading state
   if (state.isLoading) {
     return (
@@ -9525,8 +9479,8 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       <EditingModeDropdown
         mode={editingMode}
         onModeChange={(mode) => {
+          if (mode === 'suggesting') return;
           setEditingMode(mode);
-          if (mode === 'suggesting') setShowCommentsSidebar(true);
         }}
       />
       {agentPanel && agentPanel.showToolbarButton !== false && (
@@ -9539,7 +9493,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           />
         </>
       )}
-      {toolbarExtra}
     </>
   );
 
@@ -9659,7 +9612,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                             onInsertSectionBreak={handleInsertSectionBreak}
                             onInsertField={handleInsertField}
                             onInsertTOC={handleInsertTOC}
-                            onAddComment={handleStartAddComment}
                             onInsertHorizontalRule={handleInsertHorizontalRule}
                             onInsertFootnote={handleInsertFootnote}
                             imageContext={state.pmImageContext}
@@ -9692,33 +9644,8 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                             tableContext={state.pmTableContext}
                             onTableAction={handleTableAction}
                           >
-                            {/* The title row (logo + document name) is the app
-                          shell — hidden in `chrome:"embedded"`. The menu bar is
-                          the editing surface, gated independently, so embedded
-                          keeps the Insert/Format/Tools/… menus while dropping
-                          only the logo/name row (doc 39). */}
-                            {(showTitleBarEffective || showMenuBarEffective) && (
-                              <EditorToolbar.TitleBar>
-                                {showTitleBarEffective && renderLogo && (
-                                  <EditorToolbar.Logo>{renderLogo()}</EditorToolbar.Logo>
-                                )}
-                                {showTitleBarEffective && documentName !== undefined && (
-                                  <EditorToolbar.DocumentName
-                                    value={documentName}
-                                    onChange={onDocumentNameChange}
-                                    editable={documentNameEditable}
-                                  />
-                                )}
-                                {showTitleBarEffective && renderTitleBarRight && (
-                                  <EditorToolbar.TitleBarRight>
-                                    {renderTitleBarRight()}
-                                  </EditorToolbar.TitleBarRight>
-                                )}
-                                {showMenuBarEffective && <EditorToolbar.MenuBar />}
-                              </EditorToolbar.TitleBar>
-                            )}
                             {showToolbarEffective && (
-                              <EditorToolbar.FormattingBar>
+                              <EditorToolbar.FormattingBar startItems={toolbarExtra}>
                                 {toolbarChildren}
                               </EditorToolbar.FormattingBar>
                             )}
@@ -9728,9 +9655,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                     </div>
                   )}
 
-                  {editingMode === 'suggesting' && (
-                    <SuggestingModeBanner onSwitchToEditing={() => setEditingMode('editing')} />
-                  )}
+                  
 
                   {/* Autosave restore prompt — shown at mount when an autosave
                     record exists from the last session. Hidden on desktop:
@@ -10166,17 +10091,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                                       activeItemId={expandedSidebarItem}
                                     />
                                   )}
-                                  <CommentMarginMarkers
-                                    comments={comments}
-                                    anchorPositions={anchorPositions}
-                                    zoom={state.zoom}
-                                    pageWidth={pageWidthPx}
-                                    sidebarOpen={sidebarOpen}
-                                    resolvedCommentIds={resolvedCommentIds}
-                                    onMarkerClick={() => {
-                                      setShowCommentsSidebar(true);
-                                    }}
-                                  />
                                   {/* Version history is mounted as a flex sibling
                                   of the scroll container (below this block),
                                   not here — keeping it outside the scrolling
@@ -10389,71 +10303,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                                 editorColumnRef.current
                               )}
 
-                            {/* Floating "add comment" button — appears on right edge of page at selection */}
-                            {floatingCommentBtn != null && !isAddingComment && !readOnly && (
-                              <Tooltip content={t('formattingBar.addComment')} side="bottom" delayMs={300}>
-                                <button
-                                  type="button"
-                                  data-testid="floating-add-comment-button"
-                                  aria-label={t('formattingBar.addComment')}
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    const view = pagedEditorRef.current?.getView();
-                                    if (view) {
-                                      const { from, to } = view.state.selection;
-                                      if (from !== to) {
-                                        setCommentSelectionRange({ from, to });
-                                        const pendingMark = view.state.schema.marks.comment.create({
-                                          commentId: PENDING_COMMENT_ID,
-                                        });
-                                        const tr = view.state.tr.addMark(from, to, pendingMark);
-                                        tr.setSelection(TextSelection.create(tr.doc, to));
-                                        view.dispatch(tr);
-                                      }
-                                    }
-                                    setAddCommentYPosition(floatingCommentBtn.top);
-                                    setShowCommentsSidebar(true);
-                                    setIsAddingComment(true);
-                                    setFloatingCommentBtn(null);
-                                  }}
-                                  style={{
-                                    position: 'absolute',
-                                    top: floatingCommentBtn.top,
-                                    left: floatingCommentBtn.left,
-                                    transform: 'translate(-50%, -50%)',
-                                    zIndex: 50,
-                                    width: 28,
-                                    height: 28,
-                                    borderRadius: 6,
-                                    border: '1px solid rgba(26, 115, 232, 0.3)',
-                                    backgroundColor: 'var(--doc-surface, #fff)',
-                                    color: 'var(--doc-primary)',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    boxShadow: '0 1px 3px rgba(60,64,67,0.2)',
-                                    transition:
-                                      'background-color var(--doc-anim-base), box-shadow var(--doc-anim-base)',
-                                  }}
-                                  onMouseOver={(e) => {
-                                    (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                                      'rgba(26, 115, 232, 0.08)';
-                                    (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                                      '0 1px 4px rgba(26, 115, 232, 0.3)';
-                                  }}
-                                  onMouseOut={(e) => {
-                                    (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                                      'var(--doc-surface, #fff)';
-                                    (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                                      '0 1px 3px rgba(60,64,67,0.2)';
-                                  }}
-                                >
-                                  <MaterialSymbol name="add_comment" size={16} />
-                                </button>
-                              </Tooltip>
-                            )}
 
                             {/* Inline Header/Footer Editor — positioned over the target area */}
                             {hfEditPosition &&
@@ -10690,10 +10539,8 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                     {showPanelRailEffective && !focusMode && (
                       <PanelRail
                         outlineVisible={showOutlineEffective}
-                        commentsVisible={showCommentsSidebar}
                         historyVisible={showVersionHistory}
                         onToggleOutline={handleToggleOutline}
-                        onToggleComments={handleToggleComments}
                         propertiesVisible={showProperties}
                         onToggleProperties={() =>
                           openRightPanel(showProperties ? 'none' : 'properties')

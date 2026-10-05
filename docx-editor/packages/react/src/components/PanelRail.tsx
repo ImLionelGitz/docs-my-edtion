@@ -140,7 +140,6 @@ function RailButton({
 
 export function PanelRail({
   outlineVisible,
-  commentsVisible,
   historyVisible,
   onToggleOutline,
   onToggleComments,
@@ -179,15 +178,6 @@ export function PanelRail({
           icon="format_list_bulleted"
           active={!!outlineVisible}
           onClick={onToggleOutline}
-        />
-      )}
-      {onToggleComments && (
-        <RailButton
-          testId="rail-comments"
-          label={commentsVisible ? t('panelRail.hideComments') : t('panelRail.comments')}
-          icon="comment"
-          active={!!commentsVisible}
-          onClick={onToggleComments}
         />
       )}
       {onToggleHistory && (

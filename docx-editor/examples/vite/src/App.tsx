@@ -526,14 +526,17 @@ export function App() {
       : undefined;
   }, []);
 
-  // Collab mode: detected from `?room=<docId>&backend=<wsUrl>`. The
-  // GitHub Pages build leaves these blank and stays single-user;
-  // the Docker-Hub image's frontend defaults `backend` to its own
-  // WS path via `?room=…` alone. Falls back to ws://localhost:8080
-  // for local dev.
+  // Collab is only available when the build has a real collab server
+  // to talk to. The Pages demo builds with this off because there's no
+  // collab server behind doc.schnsrw.live; the Docker image and local
+  // dev builds set VITE_COLLAB_ENABLED=true. Hiding the Share button in
+  // the disabled case prevents the user from hitting a dead /api/rooms
+  // POST and having no idea why.
+  const collabEnabled = false;
+
   const collabParams = useMemo(() => {
     // Desktop is offline-first — never enter a collab room there.
-    if (isDesktop) return null;
+    if (isDesktop || !collabEnabled) return null;
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
     if (!room) return null;
@@ -558,7 +561,7 @@ export function App() {
     const kind: 'docx' | 'markdown' | 'text' =
       kindParam === 'text' ? 'text' : kindParam === 'markdown' ? 'markdown' : 'docx';
     return { room, backend, kind };
-  }, [isDesktop]);
+  }, [isDesktop, collabEnabled]);
 
   // Collab server endpoints — the share-link + seed flow lives on the
   // Node CasualOffice/collab server (Hocuspocus + its `/api/rooms` REST
@@ -612,19 +615,6 @@ export function App() {
   }, []);
 
   const [shareOpen, setShareOpen] = useState(false);
-
-  // Collab is only available when the build has a real collab server
-  // to talk to. The Pages demo builds with this off because there's no
-  // collab server behind doc.schnsrw.live; the Docker image and local
-  // dev builds set VITE_COLLAB_ENABLED=true. Hiding the Share button in
-  // the disabled case prevents the user from hitting a dead /api/rooms
-  // POST and having no idea why.
-  const collabEnabled = useMemo(() => {
-    // Desktop disables collaboration entirely regardless of the env flag.
-    if (isDesktop) return false;
-    const raw = (import.meta as { env?: Record<string, string> }).env?.VITE_COLLAB_ENABLED;
-    return raw === 'true' || raw === '1';
-  }, [isDesktop]);
 
   // Under `?e2e=1`, expose the editor ref on window so Playwright can
   // call addComment/getComments/findInDocument programmatically. Off by

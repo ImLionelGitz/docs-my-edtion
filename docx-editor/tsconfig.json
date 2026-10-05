@@ -17,7 +17,6 @@
     "noFallthroughCasesInSwitch": true,
     "declaration": true,
     "declarationMap": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./packages/react/src/*"],
       "@casualoffice/docs": ["./packages/react/src/index.ts"],

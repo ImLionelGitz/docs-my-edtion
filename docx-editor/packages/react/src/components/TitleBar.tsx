@@ -26,7 +26,6 @@ import { useDialogActions } from './DialogActionsContext';
 import { useViewState } from './ViewStateContext';
 import type { FormattingAction } from './Toolbar';
 import { useTranslation } from '../i18n';
-import { openReportIssue } from './reportIssue';
 
 // ============================================================================
 // Default Doc Icon (shown when no Logo is provided)
@@ -286,7 +285,6 @@ export function MenuBar() {
     onExportOdt,
     onExportMd,
     onExportTxt,
-    onReportBug,
     onConvertSelectionToTable,
     onConvertTableToText,
     onOpenTranslate,
@@ -363,7 +361,6 @@ export function MenuBar() {
   const {
     openPageSetup: onPageSetup,
     openFileProperties: onFileProperties,
-    showAbout: onShowAbout,
     openCommandPalette: onOpenCommandPalette,
     openKeyboardShortcuts: onOpenKeyboardShortcuts,
     openPreferences: onOpenPreferences,
@@ -1107,21 +1104,7 @@ export function MenuBar() {
           { type: 'separator' as const } as MenuEntry,
         ]
       : []),
-    {
-      icon: 'bug_report',
-      label: t('toolbar.reportIssue'),
-      onClick: () => (onReportBug ? onReportBug() : openReportIssue()),
-    } as MenuEntry,
-    ...(onShowAbout
-      ? [
-          { type: 'separator' as const } as MenuEntry,
-          {
-            icon: 'info',
-            label: t('toolbar.aboutCasualEditor'),
-            onClick: onShowAbout,
-          } as MenuEntry,
-        ]
-      : []),
+      // add more later
     ...(onOpenKeyboardShortcuts
       ? [
           { type: 'separator' as const } as MenuEntry,

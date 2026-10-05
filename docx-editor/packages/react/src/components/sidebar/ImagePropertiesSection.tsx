@@ -13,105 +13,6 @@ import { useEffect, useState, type CSSProperties, type JSX } from 'react';
 import { useTranslation } from '../../i18n';
 import type { TranslationKey } from '../../i18n';
 
-interface WrapOption {
-  value: string;
-  labelKey: TranslationKey;
-  /** 24×24 icon path describing the wrap mode. */
-  icon: JSX.Element;
-}
-
-// Compact glyphs that read at a glance — text lines + a block standing for the
-// image, arranged to suggest each wrap relationship.
-const WRAP_OPTIONS: WrapOption[] = [
-  {
-    value: 'inline',
-    labelKey: 'sidebar.imageProperties.wrapInline',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="3" y="9" width="6" height="6" rx="1" fill="currentColor" />
-        <path
-          d="M11 10h10M11 14h10"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    value: 'squareLeft',
-    labelKey: 'sidebar.imageProperties.wrapLeft',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="3" y="6" width="8" height="8" rx="1" fill="currentColor" />
-        <path
-          d="M13 7h8M13 11h8M3 16h18M3 20h18"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    value: 'squareRight',
-    labelKey: 'sidebar.imageProperties.wrapRight',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="13" y="6" width="8" height="8" rx="1" fill="currentColor" />
-        <path
-          d="M3 7h8M3 11h8M3 16h18M3 20h18"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    value: 'behind',
-    labelKey: 'sidebar.imageProperties.wrapBehind',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="7" y="6" width="10" height="10" rx="1" fill="currentColor" opacity="0.35" />
-        <path
-          d="M3 8h18M3 12h18M3 16h18"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    value: 'inFront',
-    labelKey: 'sidebar.imageProperties.wrapInFront',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path
-          d="M3 8h18M3 12h18M3 16h18"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          opacity="0.5"
-        />
-        <rect x="7" y="6" width="10" height="10" rx="1" fill="currentColor" />
-      </svg>
-    ),
-  },
-  {
-    value: 'topAndBottom',
-    labelKey: 'sidebar.imageProperties.wrapTopAndBottom',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M3 5h18M3 8h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        <rect x="6" y="10.5" width="12" height="4" rx="1" fill="currentColor" />
-        <path d="M3 17h18M3 20h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-];
-
 const GROUP_HEADER: CSSProperties = {
   padding: '14px 16px 8px',
   fontSize: 11,
@@ -120,31 +21,6 @@ const GROUP_HEADER: CSSProperties = {
   color: 'var(--doc-text-muted)',
   fontWeight: 600,
 };
-
-const TILE_GRID: CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(3, 1fr)',
-  gap: 6,
-  padding: '0 12px',
-};
-
-const tile = (active: boolean): CSSProperties => ({
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  gap: 4,
-  padding: '8px 2px 6px',
-  fontSize: 10.5,
-  lineHeight: 1.2,
-  textAlign: 'center',
-  color: active ? 'var(--doc-primary, #1a73e8)' : 'var(--doc-text, #202124)',
-  background: active ? 'var(--doc-primary-light, #e8f0fe)' : 'transparent',
-  border: active
-    ? '1.5px solid var(--doc-primary, #1a73e8)'
-    : '1.5px solid var(--doc-border, #dadce0)',
-  borderRadius: 8,
-  cursor: 'pointer',
-});
 
 const SIZE_ROW: CSSProperties = {
   display: 'flex',
@@ -282,7 +158,6 @@ export function ImagePropertiesSection({
   borderWidth,
   borderColor,
   alt,
-  onSetWrap,
   onSetSize,
   onTransform,
   onSetBorder,
@@ -338,37 +213,6 @@ export function ImagePropertiesSection({
 
   return (
     <div data-testid="properties-image-section">
-      <div style={GROUP_HEADER}>{t('sidebar.imageProperties.textWrapping')}</div>
-      <div
-        style={TILE_GRID}
-        role="group"
-        aria-label={t('sidebar.imageProperties.textWrapping')}
-      >
-        {WRAP_OPTIONS.map((o) => {
-          const active = wrapType === o.value;
-          const label = t(o.labelKey);
-          return (
-            <button
-              key={o.value}
-              type="button"
-              role="menuitemradio"
-              aria-checked={active}
-              aria-label={label}
-              title={label}
-              style={tile(active)}
-              data-testid={`properties-wrap-${o.value}`}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onSetWrap(o.value);
-              }}
-            >
-              {o.icon}
-              <span>{label}</span>
-            </button>
-          );
-        })}
-      </div>
-
       {onSetSize && (width != null || height != null) && (
         <>
           <div style={GROUP_HEADER}>{t('dialogs.pageSetup.sizeLabel')}</div>

@@ -40,6 +40,8 @@ import { useViewState } from './ViewStateContext';
 const ICON_SIZE = 18;
 
 export interface FormattingBarProps extends ToolbarProps {
+  /** Custom toolbar items to render at the start */
+  startItems?: ReactNode;
   /** Custom toolbar items to render at the end */
   children?: ReactNode;
   /** When true, renders with display:contents so children flow in parent flex container */
@@ -88,6 +90,7 @@ export function FormattingBar(explicitProps: FormattingBarProps) {
     style,
     enableShortcuts = true,
     editorRef,
+    startItems,
     children,
     showFontPicker = true,
     fontFamilies,
@@ -388,6 +391,8 @@ export function FormattingBar(explicitProps: FormattingBarProps) {
       onMouseDown={inline ? undefined : handleBarMouseDown}
       onMouseUp={inline ? undefined : handleBarMouseUp}
     >
+      {startItems}
+      
       {/* Undo/Redo Group */}
       <ToolbarGroup label={t('formattingBar.groups.history')}>
         <ToolbarButton
