@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from '../i18n';
 import { useRovingTabindex } from '../hooks/useRovingTabindex';
-import type { ReactNode } from 'react';
+import type { ReactNode, WheelEvent } from 'react';
 import type { ColorValue, ParagraphAlignment } from '@eigenpal/docx-core/types/document';
 import { FontPicker } from './ui/FontPicker';
 import { normalizeFontFamilies } from './ui/normalizeFontFamilies';
@@ -374,6 +374,12 @@ export function FormattingBar(explicitProps: FormattingBarProps) {
     [onRefocusEditor]
   );
 
+  // wesker
+  const handleWheel = (e: WheelEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    el.scrollLeft += e.deltaY
+  }
+
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
@@ -381,7 +387,8 @@ export function FormattingBar(explicitProps: FormattingBarProps) {
       ref={barRef}
       className={cn(
         !inline &&
-          'flex items-center px-2 py-1 bg-[color:var(--doc-bg-subtle,#f1f5f9)] text-[color:var(--doc-text-on-surface,#1f2937)] rounded-full min-h-[36px] overflow-x-auto mx-2 mb-1',
+          'flex items-center px-2 py-1 bg-[color:var(--doc-bg-subtle,#f1f5f9)] text-[color:var(--doc-text-on-surface,#1f2937)] min-h-[36px] overflow-x-auto mb-1',
+          'scrollbar scrollbar-thumb-[#0da26b] scrollbar-track-transparent',
         className
       )}
       style={inline ? { display: 'contents', ...style } : style}
@@ -390,6 +397,7 @@ export function FormattingBar(explicitProps: FormattingBarProps) {
       data-testid={inline ? undefined : 'formatting-bar'}
       onMouseDown={inline ? undefined : handleBarMouseDown}
       onMouseUp={inline ? undefined : handleBarMouseUp}
+      onWheel={handleWheel}
     >
       {startItems}
       

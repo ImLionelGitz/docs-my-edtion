@@ -512,7 +512,7 @@ export interface DocxEditorProps {
   document?: Document | null;
   
   /** External menu bar component */
-  myMenuBar?: (oprions: DialogActions) => void | null;
+  myMenuBar?: (options: DialogActions) => void;
 
   /** Callback when document is saved */
   onSave?: (buffer: ArrayBuffer) => void;
@@ -9696,6 +9696,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                       {/* Editor container - this is the scroll container (toolbar is above, not inside) */}
                       <div
                         ref={scrollContainerRef}
+                        className="scrollbar scrollbar-thumb-[#0da26b] scrollbar-track-transparent"
                         style={editorContainerStyle}
                         onMouseDown={(e) => {
                           // Click in the grey gutter around the page → collapse any
