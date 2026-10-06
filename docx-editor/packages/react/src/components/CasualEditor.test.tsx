@@ -21,8 +21,6 @@ describe('CasualEditor SDK shape', () => {
     const _expectShape = (r: CasualEditorRef) => {
       // SDK-level
       r.flushSave();
-      r.collabPeers();
-      r.collabStatus();
       // Inherited from DocxEditorRef
       r.save();
       r.focus();
@@ -76,15 +74,5 @@ describe('CasualEditor SDK shape', () => {
       user: { name: 'Ada', color: '#f00' },
     };
     expect(legacy.backendUrl).toBe('wss://collab.example/yjs');
-  });
-
-  it("collabStatus returns 'standalone' when collab is off (sentinel value, not undefined)", () => {
-    // Pinning the sentinel so a host can safely
-    // switch(state.collabStatus()) without an undefined case. The
-    // type must include 'standalone' as a literal so the host's
-    // exhaustive switch lights up.
-    type Status = ReturnType<CasualEditorRef['collabStatus']>;
-    const ok: Status = 'standalone';
-    expect(ok).toBe('standalone');
   });
 });

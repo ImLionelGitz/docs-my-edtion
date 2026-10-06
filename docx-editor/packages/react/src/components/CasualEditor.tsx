@@ -44,32 +44,16 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from 'react';
 
 import { DocxEditor, type DocxEditorProps, type DocxEditorRef } from './DocxEditor';
-import { PresenceCluster } from './PresenceCluster';
 import { useTranslation } from '../i18n';
-import { ShareDialog } from './ShareDialog';
-import { createDocOpsTransport } from '../docops';
 import { createEmptyDocument } from '@eigenpal/docx-core/utils';
 import type { Document } from '@eigenpal/docx-core/types/document';
-import type { Comment } from '@eigenpal/docx-core/types/content';
 
-import {
-  useCollab,
-  makeFootnoteSync,
-  makePropsSync,
-  type CollabPeer,
-  type CollabState,
-  type CollabStatus,
-} from '../collab/useCollab';
-import { commentsFromMap, observeComments, writeCommentsToMap } from '../collab/commentSync';
-import { ReconnectBanner } from '../collab/ReconnectBanner';
 import {
   useFileSourceAutoSave,
   type UseFileSourceAutoSaveReturn,
@@ -203,11 +187,6 @@ export interface CasualEditorProps {
    */
   onAutosaveState?: (state: UseFileSourceAutoSaveReturn) => void;
   /**
-   * Fires when collab state changes (peer joins / leaves /
-   * disconnects). Drive uses this to render the presence avatars.
-   */
-  onCollabState?: (state: CollabState) => void;
-  /**
    * Share action for the collab presence cluster. When collab is
    * active the title-bar PresenceCluster always shows a Share button;
    * passing `onShare` overrides its default behaviour (which opens the
@@ -246,10 +225,6 @@ export interface CasualEditorProps {
 export interface CasualEditorRef extends DocxEditorRef {
   /** Forces a save round-trip through the autosave hook. No-op when autosave is disabled. */
   flushSave: () => Promise<void>;
-  /** Current collab presence — empty when collab is off. */
-  collabPeers: () => CollabPeer[];
-  /** Connection status — `'standalone'` when collab is off. */
-  collabStatus: () => CollabStatus | 'standalone';
 }
 
 export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
@@ -257,12 +232,8 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
     const {
       fileSource,
       docId,
-      backendUrl,
-      collab,
-      user,
       autosave = false,
       autosaveInterval = 30000,
-      author,
       documentMode,
       onModeChange,
       onDocumentModeChange,
@@ -274,8 +245,6 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
       features,
       editorExtensions,
       onAutosaveState,
-      onCollabState,
-      onShare,
       renderLoading,
       renderError,
       signing,
@@ -325,95 +294,6 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
     }, [fileSource, docId]);
 
     // ---------------------------------------------------------------
-    // Collab — opt-in via backendUrl
-    // ---------------------------------------------------------------
-
-    // Reconcile the declarative `collab` object (doc 38 §6) with the legacy
-    // `backendUrl` / `user` pair. `collab` wins when both are supplied; the
-    // room defaults to `docId` so the byte-load path (which keys off `docId`)
-    // and the live session stay aligned unless the host overrides the room.
-    const collabBackend = collab?.server ?? backendUrl;
-    const collabRoom = collab?.room ?? docId;
-    const collabUser = collab?.user ?? user;
-    const collabToken = collab?.token;
-
-    // The hook MUST be called unconditionally to obey rules-of-hooks;
-    // we pass sentinel values when collab is off and ignore the
-    // returned plugins. The destructured plugins are an empty array
-    // in standalone mode because we never wire them to DocxEditor.
-    const collabState = useCollabSafe({
-      enabled: !!collabBackend,
-      backend: collabBackend ?? '',
-      room: collabRoom,
-      user: collabUser ?? { name: 'Anonymous', color: '#94a3b8' },
-      token: collabToken,
-    });
-
-    useEffect(() => {
-      if (collabState && onCollabState) onCollabState(collabState);
-    }, [collabState, onCollabState]);
-
-    // Adapter so footnote edits ride the shared `footnotes` Y.Map (footnotes
-    // aren't in the PM tree, so they don't travel over ySyncPlugin). Memoised on
-    // collabState so the editor's observer subscribes once per session.
-    const footnoteSync = useMemo(
-      () => (collabState ? makeFootnoteSync(collabState.footnotesMap) : undefined),
-      [collabState]
-    );
-    const endnoteSync = useMemo(
-      () => (collabState ? makeFootnoteSync(collabState.endnotesMap) : undefined),
-      [collabState]
-    );
-    const propsSync = useMemo(
-      () => (collabState ? makePropsSync(collabState.propsMap) : undefined),
-      [collabState]
-    );
-
-    // Comment threads ride a shared `comments` Y.Map (highlight marks sync via
-    // ySyncPlugin, but the thread content doesn't). In collab we drive
-    // DocxEditor's CONTROLLED comments from the map: observe → setState; the
-    // editor's onCommentsChange reconciles back into the map (the observer is
-    // the single source of truth, so local writes round-trip through it too).
-    const [collabComments, setCollabComments] = useState<Comment[]>([]);
-    useEffect(() => {
-      if (!collabState) return;
-      const map = collabState.commentsMap;
-      setCollabComments(commentsFromMap(map));
-      return observeComments(map, setCollabComments);
-    }, [collabState]);
-    const handleCommentsChange = useCallback(
-      (next: Comment[]) => {
-        if (collabState) writeCommentsToMap(collabState.commentsMap, next);
-      },
-      [collabState]
-    );
-
-    // Built-in share surface. When collab is active the title-bar Share
-    // button opens the wrapper's own ShareDialog (a room link + role picker);
-    // a host that passes `onShare` overrides that with its own flow. Gated on
-    // collab so standalone docs never show a Share affordance.
-    const [shareOpen, setShareOpen] = useState(false);
-    const handleShare = onShare ?? (() => setShareOpen(true));
-
-    // Live presence in the title bar — avatar stack + room-status badge
-    // (+ Share). Only mounted when collab is active, so standalone docs keep
-    // the plain title bar. Fed by the same peers + status the ref exposes via
-    // collabPeers()/collabStatus().
-    const renderCollabPresence = collabState
-      ? () => (
-          <PresenceCluster
-            peers={collabState.peers.map((p) => ({
-              name: p.name,
-              color: p.color,
-              active: true,
-            }))}
-            status={collabState.status}
-            onShare={handleShare}
-          />
-        )
-      : undefined;
-
-    // ---------------------------------------------------------------
     // Autosave — opt-in via autosave={true}
     // ---------------------------------------------------------------
 
@@ -422,8 +302,8 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
     // and the real content arrives over Yjs — saving before that sync completes
     // would overwrite the stored .docx with a blank document (audit 2026-07-19).
     // Non-collab docs are always ready (the FileSource load is the content).
-    const collabSynced = !collabState || collabState.synced === true;
-    const isSaveReady = useCallback(() => collabSynced, [collabSynced]);
+    
+    const isSaveReady = useCallback(() => true, []);
 
     const autosaveState = useFileSourceAutoSave({
       fileSource,
@@ -452,10 +332,8 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
       return {
         ...safe,
         flushSave: () => (autosave ? autosaveState.flush() : Promise.resolve()),
-        collabPeers: () => (collabState ? collabState.peers : []),
-        collabStatus: () => (collabState ? collabState.status : 'standalone'),
       };
-    }, [collabState, autosaveState, autosave]);
+    }, [autosaveState, autosave]);
 
     // ---------------------------------------------------------------
     // Render
@@ -472,15 +350,7 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
       <DocxEditor
         ref={editorRef}
         documentBuffer={loadState.buffer}
-        document={collabState ? blankDoc() : undefined}
-        externalContent={!!collabState}
-        externalPlugins={collabState ? collabState.plugins : undefined}
-        footnoteSync={footnoteSync}
-        endnoteSync={endnoteSync}
-        propsSync={propsSync}
-        comments={collabState ? collabComments : undefined}
-        onCommentsChange={collabState ? handleCommentsChange : undefined}
-        author={author}
+        document={blankDoc()}
         documentMode={documentMode}
         onModeChange={onModeChange}
         onDocumentModeChange={onDocumentModeChange}
@@ -490,8 +360,6 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
         onError={onError}
         features={features}
         editorExtensions={editorExtensions}
-        renderTitleBarRight={renderCollabPresence}
-        docopsTransport={createDocOpsTransport({ collabWsUrl: collabBackend, room: collabRoom })}
         ai={ai}
         {...docxEditorProps}
       />
@@ -511,33 +379,9 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
       </SigningProvider>
     );
 
-    // Built-in share dialog — rendered only for the wrapper's own Share
-    // flow (collab active, host didn't supply its own `onShare`). Fixed-
-    // positioned, so it never disturbs the editor layout when closed.
-    const shareDialog =
-      collabState && !onShare ? (
-        <ShareDialog isOpen={shareOpen} onClose={() => setShareOpen(false)} roomId={collabRoom} />
-      ) : null;
-
-    // In collab mode, show the default reconnecting/offline banner
-    // above the editor whenever the session isn't connected. Hosts
-    // that render their own indicator can ignore it — the strip only
-    // appears while degraded. Standalone/connected renders unchanged
-    // so existing (non-collab) host layouts keep the editor as root.
-    if (collabState && collabState.status !== 'connected') {
-      return (
-        <div style={bannerLayoutStyle}>
-          <ReconnectBanner status={collabState.status} />
-          <div style={bannerBodyStyle}>{content}</div>
-          {shareDialog}
-        </div>
-      );
-    }
-
     return (
       <>
         {content}
-        {shareDialog}
       </>
     );
   }
@@ -546,59 +390,6 @@ export const CasualEditor = forwardRef<CasualEditorRef, CasualEditorProps>(
 // ---------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------
-
-/**
- * useCollabSafe wraps useCollab so the hook only runs when collab
- * is enabled. We can't call hooks conditionally, so we return a
- * stable null and let the underlying hook short-circuit via a
- * sentinel `__collabDisabled` value passed when `enabled=false`.
- *
- * Implementation: when disabled, we DON'T call useCollab at all
- * (it'd open a WS) — we render the wrapper without collab. To
- * keep rules-of-hooks happy across mode changes the host MUST
- * keep `backendUrl` stable across the component's lifetime: either
- * provide it or don't, but don't flip mid-session. (We can't
- * enforce that at the type level; a host that swaps modes should
- * unmount + remount the wrapper.)
- */
-function useCollabSafe(args: {
-  enabled: boolean;
-  backend: string;
-  room: string;
-  user: { name: string; color: string };
-  token?: string;
-}): CollabState | null {
-  if (!args.enabled) {
-    // Hook order is fixed for the lifetime of the component — if
-    // the caller flips backendUrl, React will throw a clearer error
-    // than we could. This branch deliberately doesn't call useCollab.
-    return null;
-  }
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  return useCollab({
-    backend: args.backend,
-    room: args.room,
-    user: args.user,
-    token: args.token,
-  });
-}
-
-// Flex-column wrapper used only when the reconnect banner is visible,
-// so the strip sits above a full-height editor body. Applied lazily
-// (collab + degraded) to avoid changing the DOM for the common case.
-const bannerLayoutStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  height: '100%',
-  minHeight: 0,
-};
-
-const bannerBodyStyle: CSSProperties = {
-  flex: '1 1 auto',
-  minHeight: 0,
-  display: 'flex',
-  flexDirection: 'column',
-};
 
 function blankDoc(): Document {
   return createEmptyDocument();
@@ -666,9 +457,6 @@ function noopDocxEditorRef(): DocxEditorRef {
     print: noop,
     loadDocument: noop,
     loadDocumentBuffer: () => Promise.resolve(),
-    addComment: () => null,
-    replyToComment: () => null,
-    resolveComment: noop,
     proposeChange: () => false,
     findInDocument: () => [],
     applyFormatting: () => false,

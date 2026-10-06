@@ -35,12 +35,6 @@ export interface DocsBridgeActions {
     author: string;
   }): boolean;
   setParagraphStyle(options: { paraId: string; styleId: string }): boolean;
-  addComment(options: {
-    paraId: string;
-    text: string;
-    author: string;
-    search?: string;
-  }): number | null;
   rewriteSelection(options: { newText: string; author: string }): boolean;
   deleteParagraphs(options: { paraIds: string[]; author: string }): boolean;
   insertParagraphAfter(options: {
@@ -132,8 +126,6 @@ export class DocsBridge {
         return this.suggestTextChange(args);
       case 'set_paragraph_style':
         return this.setParagraphStyle(args);
-      case 'add_comment':
-        return this.addComment(args);
       case 'get_block':
         return this.getBlock(args);
       case 'harmonize_styles':
@@ -574,36 +566,6 @@ export class DocsBridge {
       };
     }
     return { ok: true, diffSummary: `Applied style '${styleId}' to paragraph ${paraId}.` };
-  }
-
-  private addComment(args: Record<string, unknown>): DocOpsResult {
-    const actions = this.getActions();
-    if (!actions) return this.noActions();
-
-    const paraId = String(args.paraId ?? '');
-    const text = String(args.text ?? '');
-    const search = args.search != null ? String(args.search) : undefined;
-
-    if (!paraId || !text) {
-      return {
-        ok: false,
-        code: 'VALIDATION',
-        message: 'paraId and text are required.',
-        retryable: false,
-      };
-    }
-
-    const commentId = actions.addComment({ paraId, text, author: this.aiAuthor(), search });
-    if (commentId == null) {
-      return {
-        ok: false,
-        code: 'LOCATOR_NOT_FOUND',
-        message:
-          'Could not add comment. Check that paraId is correct and the search phrase (if given) exists in the paragraph.',
-        retryable: false,
-      };
-    }
-    return { ok: true, data: { commentId }, diffSummary: `Added comment to paragraph ${paraId}.` };
   }
 
   private getBlock(args: Record<string, unknown>): DocOpsResult {

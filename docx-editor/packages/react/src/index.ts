@@ -67,11 +67,6 @@ export {
   type CasualEditorRef,
 } from './components/CasualEditor';
 
-// ReconnectBanner — default reconnecting/offline strip, driven by a
-// CollabStatus. CasualEditor renders it automatically in collab mode;
-// exported for hosts that compose their own layout.
-export { ReconnectBanner } from './collab/ReconnectBanner';
-
 // CasualEditorIframe — iframe-mounting variant of CasualEditor.
 // Doc 16 in the parent repo. Use this for hosts that need CSS / React
 // runtime isolation (most consumers; Drive in particular). The
@@ -151,47 +146,6 @@ export {
 export { renderAsync, type RenderAsyncOptions, type DocxEditorHandle } from './renderAsync';
 export { type DocxInput, toArrayBuffer } from '@eigenpal/docx-core/utils';
 export { AgentPanel, type AgentPanelProps } from './components/AgentPanel';
-// Collab presence cluster (avatars + room status + Share) for the title bar's
-// `renderTitleBarRight` slot. Built from the shared design-system UI-kit.
-export {
-  PresenceCluster,
-  type PresenceClusterProps,
-  type PresencePeer,
-} from './components/PresenceCluster';
-
-// ShareDialog — the editor's built-in "share this live document" surface.
-// CasualEditor mounts it automatically in collab mode; exported so hosts can
-// render it themselves (e.g. from a custom `onShare`).
-export {
-  ShareDialog,
-  buildShareUrl,
-  type ShareDialogProps,
-  type ShareRole,
-} from './components/ShareDialog';
-
-// Collab — Yjs/y-websocket wiring exposed so SDK consumers (host
-// apps embedding the editor) can opt into co-edit by passing the
-// returned plugins into DocxEditor's `externalPlugins`. `yjs`,
-// `y-websocket`, `y-prosemirror` are optional peerDependencies —
-// non-collab deploys don't pay the bundle cost.
-export {
-  useCollab,
-  type CollabPeer,
-  type CollabState,
-  type CollabStatus,
-  type UseCollabOptions,
-} from './collab/useCollab';
-
-// Strict / paragraph-lock co-editing — opt-in collab mode. The plugin is
-// wired automatically by `useCollab`; hosts toggle it on the editor view
-// with `setStrictCoEditing` and reflect state with `isStrictCoEditingEnabled`.
-export {
-  setStrictCoEditing,
-  isStrictCoEditingEnabled,
-  peerLocks,
-  strictCoEditingKey,
-  type PeerLock,
-} from './collab/strictCoEditing';
 
 // Recent files (host-facing — call `recordRecentFile` on doc open,
 // surface `listRecentFiles` on a "Home" / "Open" screen).

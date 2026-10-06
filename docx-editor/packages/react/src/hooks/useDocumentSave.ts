@@ -3,24 +3,9 @@
  */
 
 /**
- * useDocumentSave — the document SAVE path extracted from the DocxEditor
- * god-component (Spec #6, the crown-jewel slice). This is the most load-bearing
- * IO code: a bug here is data loss, so the extraction is a VERBATIM move with
- * the identical dependency array `[onSave, emitError, emitEvent, comments]`,
- * which preserves the invariants exactly:
- *
- *  - `comments` stays a BY-VALUE dependency (a stale snapshot would drop new
- *    comments/replies from the saved bytes).
- *  - the refs (agentRef / pagedEditorRef / footnote/endnote/props edits) are
- *    passed by reference and read as `.current` at save time — never snapshotted
- *    into the closure (footnote/endnote/prop edits arrive after render).
- *  - the mutation ORDER is unchanged: content → comments → footnotes → endnotes
- *    → properties → reply markers → selective options → toBuffer → selective
- *    clearTrackedChanges → onSave → emitEvent.
- *
- * Guarded by: the handleSave characterization e2e (tracked-change save→reload),
- * footnote/endnote-edit e2e, the ParagraphChangeTracker unit tests, and the
- * 39-fixture round-trip gate.
+ * Serializes the current editor content and pending note/property edits.
+ * Existing DOCX comments stay in the document model; the editor does not
+ * maintain a separate editable comment state.
  */
 
 import { useCallback, type MutableRefObject, type RefObject } from 'react';
@@ -185,8 +170,6 @@ function injectTCReplyRangeMarkers(content: BlockContent[], comments: Comment[])
 export interface UseDocumentSaveOptions {
   agentRef: MutableRefObject<DocumentAgent | null>;
   pagedEditorRef: RefObject<PagedEditorRef | null>;
-  /** By-VALUE — a stale snapshot would drop new comments/replies on save. */
-  comments: Comment[];
   footnoteEditsRef: MutableRefObject<Map<number, string>>;
   endnoteEditsRef: MutableRefObject<Map<number, string>>;
   propsEditsRef: MutableRefObject<Record<string, string>>;
@@ -203,7 +186,6 @@ export function useDocumentSave(opts: UseDocumentSaveOptions): UseDocumentSaveRe
   const {
     agentRef,
     pagedEditorRef,
-    comments,
     footnoteEditsRef,
     endnoteEditsRef,
     propsEditsRef,
@@ -218,18 +200,15 @@ export function useDocumentSave(opts: UseDocumentSaveOptions): UseDocumentSaveRe
 
       try {
         const agentDoc = agentRef.current.getDocument();
+        const comments = agentDoc.package.document.comments ?? [];
 
         // Get the document from the PM editor state — this runs fromProseDoc which
         // converts PM comment marks into commentRangeStart/End in the document body.
-        // The agent's internal document has the original parsed content and won't
-        // include markers for newly added comments.
         const pmDoc = pagedEditorRef.current?.getDocument();
         if (pmDoc?.package?.document) {
           agentDoc.package.document.content = pmDoc.package.document.content;
         }
 
-        // Sync React comments state (including new replies) back to the document model
-        agentDoc.package.document.comments = comments;
 
         // Apply pending footnote text edits to the save document so they persist
         // (the surgical footnotes.xml regeneration in rezip keys off `edited`).
@@ -341,7 +320,7 @@ export function useDocumentSave(opts: UseDocumentSaveOptions): UseDocumentSaveRe
         return null;
       }
     },
-    [onSave, emitError, emitEvent, comments]
+    [onSave, emitError, emitEvent]
   );
 
   return { handleSave };

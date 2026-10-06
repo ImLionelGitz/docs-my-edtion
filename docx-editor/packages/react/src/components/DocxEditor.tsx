@@ -86,18 +86,15 @@ import { restoreNativeCitations } from '../utils/citations';
 import { triggerBrowserDownload, documentBaseName, createDocxBlob } from '../utils/download';
 import { recordRecentFile } from '../utils/recent-files';
 import { openExternal } from '../utils/openExternal';
-import { useCommentSidebarItems, type CommentCallbacks } from '../hooks/useCommentSidebarItems';
 import { useTrackedChanges } from '../hooks/useTrackedChanges';
 import type { EditorState as PMEditorState } from 'prosemirror-state';
-import { NodeSelection, Plugin, PluginKey } from 'prosemirror-state';
+import { NodeSelection, Plugin, PluginKey, type Transaction } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import type { Mark as PMMark } from 'prosemirror-model';
 import { undo as pmUndo, redo as pmRedo } from 'prosemirror-history';
-import { undoCommand as yUndoCommand, redoCommand as yRedoCommand } from 'y-prosemirror';
 import type { ReactSidebarItem } from '../plugin-api/types';
 import type { HeadingInfo } from '@eigenpal/docx-core/utils';
 import { checkAccessibility, type AccessibilityIssue } from '@eigenpal/docx-core/utils';
-import type { Comment } from '@eigenpal/docx-core/types/content';
 import { ErrorBoundary, ErrorProvider } from './ErrorBoundary';
 import type { TableAction } from './ui/TableToolbar';
 import { mapHexToHighlightName } from './toolbarUtils';
@@ -299,7 +296,6 @@ import {
   setEndnotePlainText,
 } from '@eigenpal/docx-core/docx';
 import {
-  findBodyPmAnchors,
   headerFooterRefsFromSectionProps,
 } from '@eigenpal/docx-core/layout-bridge';
 import type { HeaderFooterRefs } from '@eigenpal/docx-core/layout-engine';
@@ -327,11 +323,6 @@ import { MentionPopover } from './ui/MentionPopover';
 // Conversion (for HF inline editor save + version-history preview)
 import { proseDocToBlocks, fromProseDoc } from '@eigenpal/docx-core/prosemirror/conversion';
 import { buildVersionDiffDoc } from '../version-history/versionDiff';
-import {
-  setStrictCoEditing,
-  isStrictCoEditingEnabled,
-  strictCoEditingKey,
-} from '../collab/strictCoEditing';
 
 // ProseMirror editor
 import {
@@ -441,8 +432,6 @@ import {
   type InsertableFieldType,
 } from '@eigenpal/docx-core/prosemirror';
 import {
-  acceptChange,
-  rejectChange,
   acceptAllChanges,
   rejectAllChanges,
   findNextChange,
@@ -552,7 +541,7 @@ export interface DocxEditorProps {
    *  Return falsy / omit the prop to keep the default behaviour (convert to
    *  DOCX and load in-window). `.docx`/`.odt` never route here. */
   onOpenSourceFile?: (file: File) => boolean | Promise<boolean>;
-  /** Author name used for comments and track changes */
+  /** Author name used for tracked changes */
   author?: string;
   /** People the host (e.g. Drive) knows about, surfaced in the comment
    *  @-mention typeahead so collaborators who haven't commented yet are still
@@ -578,8 +567,7 @@ export interface DocxEditorProps {
   /** Callback when fonts are loaded */
   onFontsLoaded?: () => void;
   /**
-   * Low-level ProseMirror plugin escape hatch (from PluginHost / collab wiring
-   * such as `ySyncPlugin`). Composes with {@link editorExtensions} — both are
+   * Low-level ProseMirror plugin escape hatch (for host-provided behavior). Composes with {@link editorExtensions} — both are
    * merged into the plugin stack. Prefer `editorExtensions` for host behavior;
    * keep this for raw plugin arrays.
    */
@@ -594,50 +582,12 @@ export interface DocxEditorProps {
   /**
    * When true, the editor treats the `document` prop as a schema seed only and
    * does not load it into ProseMirror on mount. Content is expected to come from
-   * external sources — typically `externalPlugins` such as `ySyncPlugin` from
-   * `y-prosemirror`, but also any code that dispatches transactions directly.
+   * external sources, such as host plugins that dispatch transactions directly.
    *
    * You must still pass a `document` prop (e.g., `createEmptyDocument()`) so the
    * editor can build its schema and render the shell.
    */
   externalContent?: boolean;
-  /**
-   * Collab transport for footnote-text edits. Footnotes aren't in the
-   * ProseMirror document, so they don't ride ySyncPlugin; the host wires this
-   * to a shared map (e.g. the `footnotes` Y.Map from `useCollab`) so footnote
-   * edits sync across peers and survive any peer's snapshot. When provided,
-   * footnote edits route through it; the observer applies local + remote edits
-   * uniformly. Omit for single-user (edits apply directly).
-   */
-  footnoteSync?: {
-    set: (id: number, text: string) => void;
-    observe: (cb: (id: number, text: string) => void) => () => void;
-  };
-  /** Collab transport for endnote-text edits (mirror of `footnoteSync`). */
-  endnoteSync?: {
-    set: (id: number, text: string) => void;
-    observe: (cb: (id: number, text: string) => void) => () => void;
-  };
-  /** Collab transport for core document properties (File → Properties). */
-  propsSync?: {
-    set: (edits: Record<string, string>) => void;
-    observe: (cb: (props: Record<string, string>) => void) => () => void;
-  };
-  /**
-   * Starting offset for comment/tracked-change IDs. Default 0.
-   *
-   * Comments and tracked-change revisions share a single numeric ID space
-   * inside the editor (and in OOXML's `<w:comment w:id=...>` / `<w:ins
-   * w:id=...>`). The internal counter normally bumps itself above any
-   * IDs already present in the loaded document, but a collab room that
-   * seeds from `createEmptyDocument()` has no IDs to bump past, so two
-   * peers can both start at 1 and create colliding comment IDs.
-   *
-   * Pass a unique base per peer (e.g. `clientId * 1e6`) to partition the
-   * ID space — Comment.id values from peer A and peer B will never
-   * collide. Issue: github.com/eigenpal/docx-editor/issues/257.
-   */
-  commentIdBase?: number;
   /** Callback when editor view is ready (for PluginHost) */
   onEditorViewReady?: (view: import('prosemirror-view').EditorView) => void;
   /** Theme for styling */
@@ -799,31 +749,6 @@ export interface DocxEditorProps {
    * `'documentModeChange'` emitter event. Both callbacks fire.
    */
   onDocumentModeChange?: (mode: EditorMode) => void;
-  /** Callback when a comment is added via the UI */
-  onCommentAdd?: (comment: Comment) => void;
-  /** Callback when a comment is resolved via the UI */
-  onCommentResolve?: (comment: Comment) => void;
-  /** Callback when a comment is deleted via the UI */
-  onCommentDelete?: (comment: Comment) => void;
-  /** Callback when a reply is added to a comment via the UI */
-  onCommentReply?: (reply: Comment, parent: Comment) => void;
-  /**
-   * Controlled comments array. When provided, the editor reads comment thread
-   * metadata (text, author, replies, resolved status) from this prop instead
-   * of internal state, and emits every change through `onCommentsChange`.
-   *
-   * Use this with collaboration backends (Yjs, Liveblocks, Automerge, …) so
-   * comment threads sync across peers — the PM document only carries the
-   * range markers; thread metadata lives outside the doc and needs its own
-   * sync channel.
-   *
-   * If omitted, the editor falls back to internal state (current behavior).
-   * The granular `onCommentAdd`/`onCommentResolve`/`onCommentDelete`/
-   * `onCommentReply` callbacks fire in both modes.
-   */
-  comments?: Comment[];
-  /** Fires whenever the comments array changes (controlled mode). */
-  onCommentsChange?: (comments: Comment[]) => void;
   /**
    * Callback when rendered DOM context is ready (for plugin overlays).
    * Used by PluginHost to get access to the rendered page DOM for positioning.
@@ -1046,20 +971,6 @@ export interface DocxEditorRef {
    * @deprecated Use {@link export} — the canonical cross-editor name (doc 38 §4).
    */
   exportDocx: (options?: { selective?: boolean }) => Promise<ArrayBuffer | null>;
-  /** Add a comment programmatically. Anchored by Word `w14:paraId` so
-   * it survives unrelated edits. Returns the comment ID, or null if
-   * the paraId is unknown or the search text isn't found / is ambiguous. */
-  addComment: (options: {
-    paraId: string;
-    text: string;
-    author: string;
-    /** Optional: anchor to a specific phrase within the paragraph (must be unique). */
-    search?: string;
-  }) => number | null;
-  /** Reply to an existing comment. Returns the reply comment ID. */
-  replyToComment: (commentId: number, text: string, author: string) => number | null;
-  /** Resolve (mark as done) a comment. */
-  resolveComment: (commentId: number) => void;
   /** Suggest a tracked change. Pass `replaceWith: ''` to delete the matched text;
    * pass `search: ''` to insert at paragraph end. Returns false on missing paraId,
    * missing/ambiguous search, or attempt to layer on an existing tracked change. */
@@ -1071,7 +982,7 @@ export interface DocxEditorRef {
   }) => boolean;
   /** Locate every paragraph containing `query` (case-insensitive substring).
    * Returns a stable handle (paraId + the matched phrase) the agent can pass
-   * back to `addComment` / `proposeChange`. */
+   * back to `proposeChange`. */
   findInDocument: (
     query: string,
     options?: { caseSensitive?: boolean; limit?: number }
@@ -1122,8 +1033,6 @@ export interface DocxEditorRef {
     before: string;
     after: string;
   } | null;
-  /** Get all comments. */
-  getComments: () => Comment[];
   /**
    * Subscribe to document changes. Fires after every committed edit. Returns unsubscribe.
    * @deprecated Use `on('change', listener)` — the unified emitter (doc 38 §3).
@@ -1552,63 +1461,7 @@ function EditingModeDropdown({
 // MAIN COMPONENT
 // ============================================================================
 
-// Bumped on document load to be above all existing comment + tracked change IDs.
-// Can also be bumped on mount by the `commentIdBase` prop so collab peers
-// can partition the ID space and avoid collisions (issue #257).
-let nextCommentId = 1;
-const PENDING_COMMENT_ID = -1;
-
-/**
- * Bump the shared `nextCommentId` counter forward (never backward).
- * Used both by the doc-load handler (to skip past IDs already in the
- * document) and by the `commentIdBase` prop effect (to skip past a
- * collab partition).
- */
-function bumpNextCommentIdAtLeast(value: number): void {
-  if (value > nextCommentId) nextCommentId = value;
-}
-
 const EMPTY_ANCHOR_POSITIONS = new Map<string, number>();
-
-/**
- * Find the Y position (relative to parentEl) of the element containing the given PM position.
- * Used by both the floating comment button and the context menu comment action.
- * Queries all elements with data-pm-start (spans, divs, imgs) — not just spans,
- * since table cell content may use div fragments.
- */
-function findSelectionYPosition(
-  scrollContainer: HTMLElement | null,
-  parentEl: HTMLElement | null,
-  pmPos: number
-): number | null {
-  if (!scrollContainer || !parentEl) return null;
-  const pagesEl = scrollContainer.querySelector('.paged-editor__pages');
-  if (!pagesEl) return null;
-  for (const el of findBodyPmAnchors(pagesEl)) {
-    const pmStart = Number(el.dataset.pmStart);
-    const pmEnd = Number(el.dataset.pmEnd);
-    if (pmPos >= pmStart && pmPos <= pmEnd) {
-      return el.getBoundingClientRect().top - parentEl.getBoundingClientRect().top;
-    }
-  }
-  return null;
-}
-
-function createComment(text: string, authorName: string, parentId?: number): Comment {
-  return {
-    id: nextCommentId++,
-    author: authorName,
-    date: new Date().toISOString(),
-    content: [
-      {
-        type: 'paragraph',
-        formatting: {},
-        content: [{ type: 'run', formatting: {}, content: [{ type: 'text', text }] }],
-      },
-    ],
-    ...(parentId !== undefined && { parentId }),
-  };
-}
 
 function getInitialSectionProperties(
   doc: Document | null | undefined
@@ -1659,7 +1512,7 @@ function findParaIdRange(
  * Vanilla-view text of a single PM node (typically a paragraph): concatenates
  * descendant text node content, skipping any text inside an `insertion` mark.
  * Use this in any agent-facing read path so the agent's view of the document
- * matches what `add_comment` / `suggest_change` can anchor.
+ * matches what tracked-change suggestions can anchor.
  */
 function getVanillaNodeText(node: import('prosemirror-model').Node): string {
   const parts: string[] = [];
@@ -1801,19 +1654,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onModeChange,
     onDocumentModeChange,
     onDirtyChange,
-    onCommentAdd,
-    onCommentResolve,
-    onCommentDelete,
-    onCommentReply,
-    comments: commentsProp,
-    onCommentsChange,
     externalPlugins,
     editorExtensions,
     externalContent = false,
-    footnoteSync,
-    endnoteSync,
-    propsSync,
-    commentIdBase,
     onEditorViewReady,
     onRenderedDomContextReady,
     pluginOverlays,
@@ -1939,8 +1782,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   showOutlineRef.current = showOutline;
   const [outlineHeadings, setHeadingInfos] = useState<HeadingInfo[]>([]);
 
-  // Comments sidebar state
-  const [showCommentsSidebar, setShowCommentsSidebar] = useState(false);
   // Wire-up batch (Docs parity #1.5): dialogs that already existed but
   // had no menu entry. Each is open/close + a trigger handler.
   const insertSymbolOpen = dialogs.isOpen('insertSymbol');
@@ -2038,11 +1879,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     previousData: unknown | null;
   } | null>(null);
   const [previewShowChanges, setPreviewShowChanges] = useState(true);
-  // Strict / paragraph-lock co-editing (collab-only). `available` is true
-  // when the collab session wired the plugin into the body view;
-  // `enabled` mirrors the plugin's on/off so the View-menu label is right.
-  const [strictCoEditAvailable, setStrictCoEditAvailable] = useState(false);
-  const [strictCoEditEnabled, setStrictCoEditEnabled] = useState(false);
   const [showProperties, setShowProperties] = useState(false);
   // @-mention popover state (body editor only)
   const [mentionPopover, setMentionPopover] = useState<{
@@ -2064,36 +1900,11 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   const propsEditsRef = useRef<Record<string, string>>({});
   const editHistory = useEditHistory({ author: 'You' });
 
-  // Shared toggle handlers — used by both the toolbar buttons and the
-  // right-edge PanelRail so the mutual-exclusion logic between Comments
-  // and Version history lives in one place. Declared up here (before any
-  // conditional early-return) to keep React's hook order stable.
-  // Tracks `comments.length` so the rail toggle can read it without
-  // depending on the (still-undeclared at this hook order) `comments`
-  // variable. Updated every render in an effect below.
-  const commentsCountRef = useRef(0);
-  const handleToggleComments = useCallback(() => {
-    // Comments use the anchored-cards approach: each thread renders as a
-    // card floating next to its commented text (UnifiedSidebar). On an empty
-    // doc there are no anchors, so the sidebar renders a designed empty state
-    // ("No comments yet") — no transient toast needed.
-    setShowCommentsSidebar((v) => {
-      const next = !v;
-      // One right-side surface at a time: opening comments closes the rest.
-      if (next) {
-        setShowVersionHistory(false);
-        setShowProperties(false);
-        setShowOutline(false);
-      }
-      return next;
-    });
-    setExpandedSidebarItem(null);
-  }, []);
   const handleToggleVersionHistory = useCallback(() => {
     setShowVersionHistory((v) => {
       const next = !v;
       if (next) {
-        setShowCommentsSidebar(false);
+
         setExpandedSidebarItem(null);
         setShowProperties(false);
         setShowOutline(false);
@@ -2101,17 +1912,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       return next;
     });
   }, []);
-  // Comments live in internal state by default; if the consumer passes
-  // `comments` as a prop, we treat the editor as controlled — `setComments`
-  // routes mutations through `onCommentsChange` instead of touching internal
-  // state. Keeps the controlled/uncontrolled API symmetric with React inputs.
-  const [internalComments, setInternalComments] = useState<Comment[]>([]);
-  const isControlledComments = commentsProp !== undefined;
-  const comments = isControlledComments ? commentsProp : internalComments;
-  // Mirror to the ref the rail toggle reads — kept in render, not in
-  // an effect, so the very first click after a comment-state update
-  // sees the right count.
-  commentsCountRef.current = comments.length;
   // Latest PM state — mirrored from the view on every doc-changing transaction.
   // Drives `useTrackedChanges` so the sidebar derives its list directly from PM
   // (the source of truth, including remote ySync updates) rather than a debounced
@@ -2132,17 +1932,11 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     }
     return active;
   }, [outlineHeadings, pmState]);
-  const { entries: trackedChanges, commentToRevision } = useTrackedChanges(pmState);
+  const { entries: trackedChanges } = useTrackedChanges(pmState);
   const [anchorPositions, setAnchorPositions] =
     useState<Map<string, number>>(EMPTY_ANCHOR_POSITIONS);
   // No separate state needed — pluginRenderedDomContext comes from PluginHost
 
-  const [isAddingComment, setIsAddingComment] = useState(false);
-  const [commentSelectionRange, setCommentSelectionRange] = useState<{
-    from: number;
-    to: number;
-  } | null>(null);
-  const [addCommentYPosition, setAddCommentYPosition] = useState<number | null>(null);
   // `documentMode` (SuperDoc vocabulary, sheet-SDK parity) is the preferred
   // public name and wins over the legacy `mode` prop when both are set.
   const controlledMode = documentMode ?? modeProp;
@@ -2204,118 +1998,11 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     tableContext: null,
   });
 
-  // Debounce timer for orphaned-comment cleanup (still needed: orphan detection
-  // requires a post-edit settle so the user doesn't see comments vanish mid-edit).
-  const cleanOrphanedCommentsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const commentsRef = useRef(comments);
-  commentsRef.current = comments;
-  const isAddingCommentRef = useRef(isAddingComment);
-  isAddingCommentRef.current = isAddingComment;
-  const onCommentDeleteRef = useRef(onCommentDelete);
-  onCommentDeleteRef.current = onCommentDelete;
-
   // Bridge / agent event subscribers — fan-out from the existing onChange and
   // onSelectionChange paths so multiple listeners (host app, MCP server, etc.)
   // can observe edits without competing for the single React prop.
   const contentChangeSubscribersRef = useRef(new Set<(doc: Document) => void>());
   const selectionChangeSubscribersRef = useRef(new Set<(s: SelectionState | null) => void>());
-  const onCommentsChangeRef = useRef(onCommentsChange);
-  onCommentsChangeRef.current = onCommentsChange;
-
-  // Unified setter — routes to internal state in uncontrolled mode and/or to
-  // the parent's onCommentsChange callback in controlled mode.
-  //
-  // In uncontrolled mode we mutate `commentsRef.current` synchronously
-  // *before* queuing the React update so rapid sequential calls in the
-  // same tick (e.g. an agent loop calling `addComment` 30 times back-to-
-  // back) see the latest accumulated state. Without this, every functional
-  // updater reads the same stale ref and only the last comment survives.
-  //
-  // In controlled mode the parent's prop is the source of truth — we don't
-  // mutate the ref here because the parent might transform / reject the
-  // value before echoing it back via `commentsProp`. The `commentsRef.current = comments`
-  // assignment one effect above keeps the ref in sync with the prop.
-  const setComments = useCallback(
-    (next: Comment[] | ((prev: Comment[]) => Comment[])) => {
-      const resolved =
-        typeof next === 'function'
-          ? (next as (prev: Comment[]) => Comment[])(commentsRef.current)
-          : next;
-      if (resolved === commentsRef.current) return;
-      if (!isControlledComments) {
-        commentsRef.current = resolved;
-        setInternalComments(resolved);
-      }
-      onCommentsChangeRef.current?.(resolved);
-    },
-    [isControlledComments]
-  );
-
-  // Thread comments under their overlapping tracked change (parentId = revisionId).
-  // The overlap map is computed in the same doc walk as `extractTrackedChanges`
-  // so we don't pay for a second descendants() pass per transaction.
-  useEffect(() => {
-    if (commentToRevision.size === 0) return;
-    setComments((prev) => {
-      let changed = false;
-      const updated = prev.map((c) => {
-        if (c.parentId != null) return c; // already threaded
-        const rid = commentToRevision.get(c.id);
-        if (rid != null) {
-          changed = true;
-          return { ...c, parentId: rid };
-        }
-        return c;
-      });
-      return changed ? updated : prev;
-    });
-  }, [commentToRevision, setComments]);
-
-  // Remove comments whose marks no longer exist in the document
-  const cleanOrphanedComments = useCallback(() => {
-    if (isAddingCommentRef.current) return;
-    const view = pagedEditorRef.current?.getView();
-    if (!view) return;
-    const { doc, schema } = view.state;
-    const commentMarkType = schema.marks.comment;
-    if (!commentMarkType) return;
-
-    const liveIds = new Set<number>();
-    doc.descendants((node) => {
-      for (const mark of node.marks) {
-        if (mark.type === commentMarkType) {
-          const id = mark.attrs.commentId as number;
-          if (id !== PENDING_COMMENT_ID) liveIds.add(id);
-        }
-      }
-    });
-
-    const currentComments = commentsRef.current;
-    const orphanedIds = new Set<number>();
-    for (const c of currentComments) {
-      if (c.parentId == null && !liveIds.has(c.id)) {
-        orphanedIds.add(c.id);
-      }
-    }
-    if (orphanedIds.size === 0) return;
-
-    for (const c of currentComments) {
-      if (orphanedIds.has(c.id)) onCommentDeleteRef.current?.(c);
-    }
-    setComments((prev) =>
-      prev.filter((c) => !orphanedIds.has(c.id) && !orphanedIds.has(c.parentId!))
-    );
-  }, []);
-
-  // Clean up debounce timers on unmount
-  useEffect(() => {
-    return () => {
-      if (cleanOrphanedCommentsTimerRef.current) {
-        clearTimeout(cleanOrphanedCommentsTimerRef.current);
-      }
-    };
-  }, []);
-
   // Sync outline visibility when prop changes
   useEffect(() => {
     setShowOutline(showOutlineProp);
@@ -2331,70 +2018,28 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   const history = useDocumentHistory<Document | null>(initialDocument || null, {
     maxEntries: 100,
     groupingInterval: 500,
-    // Under collab, y-prosemirror's UndoManager owns Ctrl+Z/Y (wired as a
-    // keymap in useCollab). This document-model history still tracks the
-    // save-base, but its keyboard handler must NOT also fire — it would revert
-    // the save-base out of band from the PM view (and can drop peers' content).
-    enableKeyboardShortcuts: !externalContent,
+    enableKeyboardShortcuts: true,
   });
 
-  // Extract comments from document model on initial load
-  const commentsLoadedRef = useRef(false);
+  // Keep tracked-change IDs above IDs already present in the document.
+  const nextRevisionIdRef = useRef(1);
   useEffect(() => {
-    if (commentsLoadedRef.current) return;
-    const doc = history.state;
-    if (!doc) return;
-    const bodyComments = doc.package?.document?.comments;
-    if (bodyComments && bodyComments.length > 0) {
-      setComments(bodyComments);
-      setShowCommentsSidebar(true);
-      commentsLoadedRef.current = true;
-      // Ensure nextCommentId is above all loaded comment IDs AND tracked change
-      // revisionIds to avoid collisions (they share the same ID space in OOXML)
-      let maxId = bodyComments.reduce((max, c) => Math.max(max, c.id), 0);
-      // Also check tracked change revisionIds from the PM document
-      const view = pagedEditorRef.current?.getView();
-      if (view) {
-        view.state.doc.descendants((node) => {
-          for (const mark of node.marks) {
-            if (mark.attrs.revisionId != null) {
-              maxId = Math.max(maxId, mark.attrs.revisionId as number);
-            }
-          }
-        });
+    let maxId = 0;
+    for (const comment of history.state?.package?.document?.comments ?? []) {
+      maxId = Math.max(maxId, comment.id);
+    }
+    pmState?.doc.descendants((node) => {
+      for (const mark of node.marks) {
+        const id = Number(mark.attrs.revisionId);
+        if (Number.isFinite(id)) maxId = Math.max(maxId, id);
       }
-      // Bump past the document's existing IDs and (if set) past the
-      // collab partition base.
-      const partition = commentIdBase ?? 0;
-      bumpNextCommentIdAtLeast(Math.max(maxId, partition) + 1);
-    }
-  }, [history.state, commentIdBase]);
+    });
+    nextRevisionIdRef.current = Math.max(nextRevisionIdRef.current, maxId + 1);
+  }, [history.state, pmState]);
 
-  // Apply commentIdBase on mount and whenever it changes — independent
-  // of doc-load, since collab rooms can seed from createEmptyDocument()
-  // (no comments → load-time bump never fires; both peers would start
-  // at 1 without this).
-  useEffect(() => {
-    if (commentIdBase !== undefined) {
-      bumpNextCommentIdAtLeast(commentIdBase + 1);
-    }
-  }, [commentIdBase]);
-
-  // Extension manager — built once, provides schema + plugins + commands.
-  //
-  // When content is driven by an external CRDT (Yjs collab via
-  // `externalContent` + a `yUndoPlugin` in `externalPlugins`), undo/redo
-  // is owned by y-prosemirror's yUndoPlugin. Running the native
-  // prosemirror-history alongside it is the documented y-prosemirror
-  // footgun: native Ctrl+Z operates on the local EditorState's history and
-  // can revert *other* users' changes, desyncing the shared Y.Doc. Disable
-  // native history when content is external so undo stays scoped to the
-  // local user. (Read once at mount — collab-ness is fixed for the
-  // editor's lifetime; the schema must stay stable, hence the empty deps.)
+  // Build the schema, plugins, and commands once for the editor lifetime.
   const extensionManager = useMemo(() => {
-    const mgr = new ExtensionManager(
-      createStarterKit(externalContent ? { disable: ['history'] } : {})
-    );
+    const mgr = new ExtensionManager(createStarterKit());
     mgr.buildSchema();
     mgr.initializeRuntime();
     return mgr;
@@ -2650,27 +2295,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     if (targetTop != null) sc.scrollTop += targetTop - refY;
   }, []);
 
-  // Detect whether the collab session wired the Strict co-editing plugin
-  // into the body view (only then does the View-menu toggle appear).
-  useEffect(() => {
-    if (!isBodyPmReady) {
-      setStrictCoEditAvailable(false);
-      return;
-    }
-    const view = pagedEditorRef.current?.getView();
-    const ps = view ? strictCoEditingKey.getState(view.state) : undefined;
-    setStrictCoEditAvailable(!!ps);
-    setStrictCoEditEnabled(ps?.enabled ?? false);
-  }, [isBodyPmReady]);
-
-  const handleToggleStrictCoEditing = useCallback(() => {
-    const view = pagedEditorRef.current?.getView();
-    if (!view) return;
-    const next = !isStrictCoEditingEnabled(view.state);
-    setStrictCoEditing(next)(view.state, view.dispatch);
-    setStrictCoEditEnabled(next);
-  }, []);
-
   // Build the read-only preview Document: annotate the version's doc with
   // insertion/deletion marks (when Show changes is on), then convert to a
   // Document inheriting the live doc's sections/headers/footers so the
@@ -2885,21 +2509,14 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     }
   }, [hfEditPosition]);
 
-  // Helper to undo in the active editor. Under collab, undo is owned by
-  // y-prosemirror's UndoManager (native history is disabled) — drive it on the
-  // active view so the toolbar/ref match the Ctrl+Z keymap wired in useCollab.
+  // Undo in the active body or header/footer editor.
   const undoActiveEditor = useCallback(() => {
     if (hfEditPosition && hfEditorRef.current) {
       hfEditorRef.current.undo();
       return;
     }
-    if (externalContent) {
-      const view = getActiveEditorView();
-      if (view) yUndoCommand(view.state, view.dispatch);
-      return;
-    }
     pagedEditorRef.current?.undo();
-  }, [hfEditPosition, externalContent, getActiveEditorView]);
+  }, [hfEditPosition]);
 
   // Helper to redo in the active editor
   const redoActiveEditor = useCallback(() => {
@@ -2907,25 +2524,20 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       hfEditorRef.current.redo();
       return;
     }
-    if (externalContent) {
-      const view = getActiveEditorView();
-      if (view) yRedoCommand(view.state, view.dispatch);
-      return;
-    }
     pagedEditorRef.current?.redo();
-  }, [hfEditPosition, externalContent, getActiveEditorView]);
+  }, [hfEditPosition]);
 
   const canUndoActiveEditor = useMemo(() => {
     const view = getActiveEditorView();
     if (!view) return false;
-    return externalContent ? !!yUndoCommand(view.state) : pmUndo(view.state);
-  }, [getActiveEditorView, state.selectionFormatting, hfEditPosition, externalContent]);
+    return pmUndo(view.state);
+  }, [getActiveEditorView, state.selectionFormatting, hfEditPosition]);
 
   const canRedoActiveEditor = useMemo(() => {
     const view = getActiveEditorView();
     if (!view) return false;
-    return externalContent ? !!yRedoCommand(view.state) : pmRedo(view.state);
-  }, [getActiveEditorView, state.selectionFormatting, hfEditPosition, externalContent]);
+    return pmRedo(view.state);
+  }, [getActiveEditorView, state.selectionFormatting, hfEditPosition]);
 
   // Find/Replace hook
   const findReplace = useFindReplace();
@@ -3105,7 +2717,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       // properties, history. Opening any of the docked panels closes the
       // others (outline included — it was previously left open alongside).
       if (which !== 'none') {
-        setShowCommentsSidebar(false);
+
         setExpandedSidebarItem(null);
         setShowOutline(false);
       }
@@ -3439,24 +3051,15 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   // Monotonically increasing generation counter to discard stale async loads
   // Reset internal state when loading a new document (clears stale refs, comments, tracked changes, etc.)
   const resetForNewDocument = useCallback(() => {
-    commentsLoadedRef.current = false;
     trackedChangesLoadedRef.current = false;
-    setComments([]);
     setHeadingInfos([]);
-    setShowCommentsSidebar(false);
-    setIsAddingComment(false);
-    setCommentSelectionRange(null);
-    setAddCommentYPosition(null);
+
     setHfEditPosition(null);
     setAnchorPositions(EMPTY_ANCHOR_POSITIONS);
     findReplace.setMatches([], 0);
     setPaintFormatMarks(null);
     paintFormatPersistentRef.current = false;
-    if (cleanOrphanedCommentsTimerRef.current) {
-      clearTimeout(cleanOrphanedCommentsTimerRef.current);
-      cleanOrphanedCommentsTimerRef.current = null;
-    }
-  }, [findReplace.setMatches, setComments]);
+  }, [findReplace.setMatches]);
 
   // Load a pre-parsed document (used by ref method and internally)
   const loadParsedDocument = useCallback(
@@ -3504,7 +3107,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     if (trackedChangesLoadedRef.current) return;
     if (state.isLoading || !pmState) return;
     trackedChangesLoadedRef.current = true;
-    if (trackedChanges.length > 0) setShowCommentsSidebar(true);
   }, [pmState, state.isLoading, trackedChanges.length]);
 
   // Listen for font loading
@@ -3621,60 +3223,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       // remotely via ySyncPlugin in collab mode.
       const view = pagedEditorRef.current?.getView();
       if (view) setPmState(view.state);
-      // Clean up orphaned comments (debounced — avoid yanking comments mid-edit)
-      if (cleanOrphanedCommentsTimerRef.current) {
-        clearTimeout(cleanOrphanedCommentsTimerRef.current);
-      }
-      cleanOrphanedCommentsTimerRef.current = setTimeout(cleanOrphanedComments, 300);
     },
-    [onChange, pushDocument, cleanOrphanedComments, emitEvent]
+    [onChange, pushDocument, emitEvent]
   );
-
-  // Recompute the floating "add comment" button position from the current PM
-  // selection + page/container geometry. Called from handleSelectionChange and
-  // from the geometry-change effects below (resize, zoom), because PagedEditor's
-  // onSelectionChange no longer fires on mere overlay redraws after the
-  // state-identity dedup in #268.
-  const readOnlyForFloatingBtnRef = useRef(false);
-  const recomputeFloatingCommentBtn = useCallback(() => {
-    const view = pagedEditorRef.current?.getView();
-    if (!view) return;
-    const { from } = view.state.selection;
-    const container = scrollContainerRef.current;
-    // Use editorColumnRef (the position:relative ancestor that the button is
-    // portalled into) — NOT editorContentRef (which scrolls inside the
-    // container and drifts, causing Y to grow the further down you select).
-    const posContext = editorColumnRef.current;
-    if (!container || !posContext) return;
-    const rawTop = findSelectionYPosition(container, posContext, from);
-    if (rawTop == null) return;
-  }, [state.zoom]);
-  // Keep the readOnly ref used by recomputeFloatingCommentBtn in sync
-  readOnlyForFloatingBtnRef.current = readOnly;
-
-  // Reposition the floating "add comment" button when the editor container
-  // resizes (window resize, sidebar toggle, loading→ready transition) or when
-  // zoom changes. Both move the page edges without changing PM selection, so
-  // the onSelectionChange path no longer covers them after the dedup fix in
-  // #268. The scroll container may not be mounted on the first render (loading
-  // state renders a different subtree), so re-run the effect whenever that
-  // state flips — that's the point at which the container first becomes
-  // available.
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const ro = new ResizeObserver(() => recomputeFloatingCommentBtn());
-    ro.observe(container);
-    const onWinResize = () => recomputeFloatingCommentBtn();
-    window.addEventListener('resize', onWinResize);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', onWinResize);
-    };
-  }, [state.isLoading, recomputeFloatingCommentBtn]);
-  useEffect(() => {
-    recomputeFloatingCommentBtn();
-  }, [state.zoom, recomputeFloatingCommentBtn]);
 
   // Handle selection changes from ProseMirror
   const handleSelectionChange = useCallback(
@@ -3887,8 +3438,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         pmTextBoxContext: pmTextBoxCtx,
       }));
 
-      // Update floating comment button position
-      recomputeFloatingCommentBtn();
 
       // Paint-format armed and now there's a non-empty selection — apply.
       if (paintFormatMarksRef.current) {
@@ -3915,7 +3464,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     },
     // getActiveEditorView's return depends on hfEditPosition; theme drives
     // color resolution. Both must be in deps to avoid stale-closure reads.
-    [onSelectionChange, isAddingComment, readOnly, getActiveEditorView, theme, emitEvent]
+    [onSelectionChange, readOnly, getActiveEditorView, theme, emitEvent]
   );
 
   // Table selection hook
@@ -4210,7 +3759,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     zoomIn?: () => void;
     zoomOut?: () => void;
     zoomReset?: () => void;
-    startComment?: () => void;
   }>({});
 
   // Handle table insert from toolbar
@@ -4296,27 +3844,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [paintFormatMarks]);
-
-  // Start the add-comment flow from a toolbar/menu trigger (mirrors the
-  // floating "+" button + context-menu addComment paths). Selection
-  // must be non-empty; when empty, the toolbar button is disabled.
-  const handleStartAddComment = useCallback(() => {
-    const view = pagedEditorRef.current?.getView();
-    if (!view) return;
-    const { from, to } = view.state.selection;
-    if (from === to) return;
-    const yPos = findSelectionYPosition(scrollContainerRef.current, editorContentRef.current, from);
-    setCommentSelectionRange({ from, to });
-    const pendingMark = view.state.schema.marks.comment.create({
-      commentId: PENDING_COMMENT_ID,
-    });
-    const tr = view.state.tr.addMark(from, to, pendingMark);
-    tr.setSelection(TextSelection.create(tr.doc, to));
-    view.dispatch(tr);
-    setAddCommentYPosition(yPos);
-    setShowCommentsSidebar(true);
-    setIsAddingComment(true);
-  }, []);
 
   // Insert a page break at cursor
   const handleInsertPageBreak = useCallback(() => {
@@ -4594,7 +4121,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           setHeadingInfos(collectHeadings(view.state.doc));
         }
         // One right-side surface at a time: opening the outline closes the rest.
-        setShowCommentsSidebar(false);
+
         setExpandedSidebarItem(null);
         setShowVersionHistory(false);
         setShowProperties(false);
@@ -4947,26 +4474,17 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     [history]
   );
 
-  // Commit an edit from the dialog. In collab, route through the shared map so
-  // peers receive it; the observer applies it to every peer's model (including
-  // ours). Single-user applies directly.
+  // Apply note edits locally and refresh the page layout.
   const handleApplyNoteEdit = useCallback(
     (kind: 'footnote' | 'endnote', noteId: number, text: string) => {
-      const noteSync = kind === 'footnote' ? footnoteSync : endnoteSync;
-      if (noteSync) {
-        noteSync.set(noteId, text);
-      } else {
-        applyNoteEditToModel(kind, noteId, text);
-        pagedEditorRef.current?.relayout();
-      }
+      applyNoteEditToModel(kind, noteId, text);
+      pagedEditorRef.current?.relayout();
       setNoteEdit(null);
     },
-    [footnoteSync, endnoteSync, applyNoteEditToModel]
+    [applyNoteEditToModel]
   );
 
-  // Apply core-property edits to the live + save docs. Runs for local and remote
-  // (collab) edits so every peer's model carries them and any peer's snapshot
-  // writes them through applyCorePropertiesToXml.
+  // Apply core-property edits to the live and save documents for serialization.
   const applyPropsToModel = useCallback((edits: Record<string, string>) => {
     const apply = (pkg: import('@eigenpal/docx-core/types/document').DocxPackage | undefined) => {
       if (pkg) pkg.properties = { ...(pkg.properties ?? {}), ...edits };
@@ -4977,40 +4495,11 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
      
   }, []);
 
-  // Commit a File → Properties edit. In collab, route through the shared map so
-  // peers receive it; the observer applies it everywhere. Single-user direct.
+  // Apply File Properties edits to the live and save documents.
   const handleApplyFileProperties = useCallback(
-    (edits: Record<string, string>) => {
-      if (propsSync) propsSync.set(edits);
-      else applyPropsToModel(edits);
-    },
-    [propsSync, applyPropsToModel]
+    (edits: Record<string, string>) => applyPropsToModel(edits),
+    [applyPropsToModel]
   );
-
-  useEffect(() => {
-    if (!propsSync) return;
-    return propsSync.observe((props) => applyPropsToModel(props));
-  }, [propsSync, applyPropsToModel]);
-
-  // Apply remote (and own) note edits broadcast over the shared maps.
-  useEffect(() => {
-    const unsubs: Array<() => void> = [];
-    if (footnoteSync)
-      unsubs.push(
-        footnoteSync.observe((id, text) => {
-          applyNoteEditToModel('footnote', id, text);
-          pagedEditorRef.current?.relayout();
-        })
-      );
-    if (endnoteSync)
-      unsubs.push(
-        endnoteSync.observe((id, text) => {
-          applyNoteEditToModel('endnote', id, text);
-          pagedEditorRef.current?.relayout();
-        })
-      );
-    return () => unsubs.forEach((u) => u());
-  }, [footnoteSync, endnoteSync, applyNoteEditToModel]);
 
   // Handle image transform (rotate/flip)
   const handleImageTransform = useCallback(
@@ -5744,7 +5233,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   );
 
   // Ref pattern for onSelectionChange: the implementation reads the latest
-  // closure values on every call (resolvedCommentIds, commentSidebarItems…)
+  // closure values on every call (resolvedCommentIds, pluginSidebarItems…)
   // while the _stable wrapper_ never changes reference, keeping PagedEditor's
   // memo() effective across every DocxEditor re-render caused by
   // pmState / isDirty / isSaving state flips.
@@ -6697,29 +6186,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           if (aiEnabled) setHasTextSelection(true);
           break;
         }
-        // Comment — same flow as floating comment button
-        case 'addComment': {
-          const { from, to } = view.state.selection;
-          if (from === to) break;
-          // Compute Y position BEFORE dispatching — dispatch triggers re-layout
-          // which rebuilds page DOM and invalidates the old span elements
-          const yPos = findSelectionYPosition(
-            scrollContainerRef.current,
-            editorContentRef.current,
-            from
-          );
-          setCommentSelectionRange({ from, to });
-          const pendingMark = view.state.schema.marks.comment.create({
-            commentId: PENDING_COMMENT_ID,
-          });
-          const tr = view.state.tr.addMark(from, to, pendingMark);
-          tr.setSelection(TextSelection.create(tr.doc, to));
-          view.dispatch(tr);
-          setAddCommentYPosition(yPos);
-          setShowCommentsSidebar(true);
-          setIsAddingComment(true);
-          break;
-        }
       }
       // TextContextMenu calls onClose after onAction, so no need to close here
     },
@@ -7436,12 +6902,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   }, [scrollContainerEl]);
 
   // Document SAVE path — extracted to useDocumentSave (Spec #6, crown jewel).
-  // Verbatim move; the identical dep array preserves comments-by-value and
-  // refs-never-snapshotted. See the hook for the mutation-order contract.
   const { handleSave } = useDocumentSave({
     agentRef,
     pagedEditorRef,
-    comments,
     footnoteEditsRef,
     endnoteEditsRef,
     propsEditsRef,
@@ -7681,7 +7144,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       zoomIn: () => handleZoomChange(Math.min(state.zoom * 1.1, 4)),
       zoomOut: () => handleZoomChange(Math.max(state.zoom / 1.1, 0.25)),
       zoomReset: () => handleZoomChange(1),
-      startComment: handleStartAddComment,
     };
   }, [
     handleDownloadDocument,
@@ -7690,7 +7152,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     handleOpenDocument,
     handleZoomChange,
     state.zoom,
-    handleStartAddComment,
   ]);
 
   const handleDocxFileChange = useCallback(
@@ -7959,49 +7420,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       importDocx: loadBuffer,
       exportDocx: handleSave,
 
-      addComment: (options) => {
-        const view = pagedEditorRef.current?.getView();
-        if (!view) return null;
-        const { schema } = view.state;
-        if (!schema.marks.comment) return null;
-
-        const range = findParaIdRange(view.state.doc, options.paraId);
-        if (!range) return null;
-
-        let from = range.from;
-        let to = range.to;
-
-        if (options.search) {
-          const textRange = findTextInPmParagraph(
-            view.state.doc,
-            range.from,
-            range.to,
-            options.search
-          );
-          if (!textRange) return null;
-          from = textRange.from;
-          to = textRange.to;
-        }
-
-        const comment = createComment(options.text, options.author);
-        const commentMark = schema.marks.comment.create({ commentId: comment.id });
-        view.dispatch(view.state.tr.addMark(from, to, commentMark));
-        setComments((prev) => [...prev, comment]);
-        setShowCommentsSidebar(true);
-        return comment.id;
-      },
-
-      replyToComment: (commentId, text, authorName) => {
-        if (!comments.some((c) => c.id === commentId)) return null;
-        const reply = createComment(text, authorName, commentId);
-        setComments((prev) => [...prev, reply]);
-        return reply.id;
-      },
-
-      resolveComment: (commentId) => {
-        setComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, done: true } : c)));
-      },
-
       proposeChange: (options) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return false;
@@ -8048,7 +7466,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           if (overlapsTrackedChange) return false;
         }
 
-        const revisionId = nextCommentId++;
+        const revisionId = nextRevisionIdRef.current++;
         const date = new Date().toISOString();
 
         const deletionMark = schema.marks.deletion.create({
@@ -8075,7 +7493,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         if (isInsertion && isDeletion) return false; // nothing to do
         view.dispatch(tr);
 
-        setShowCommentsSidebar(true);
         return true;
       },
 
@@ -8226,7 +7643,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           : applyStyle(options.styleId);
 
         let didApply = false;
-        cmd(stateWithSel, (newTr) => {
+        cmd(stateWithSel, (newTr: Transaction) => {
           didApply = true;
           newTr.setSelection(view.state.selection.map(newTr.doc, newTr.mapping));
           view.dispatch(newTr);
@@ -8327,7 +7744,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         const paraEnd = paraStart + para.content.size;
         // Vanilla view: build before/selectedText/after independently from the
         // doc so the result matches what the agent reads via read_document and
-        // can anchor via add_comment. Insertion-marked text never appears.
+        // can use to locate text. Insertion-marked text never appears.
         const before = getVanillaTextBetween(doc, paraStart, selection.from);
         const selectedText = getVanillaTextBetween(doc, selection.from, selection.to);
         const after = getVanillaTextBetween(doc, selection.to, paraEnd);
@@ -8340,7 +7757,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         };
       },
 
-      getComments: () => comments,
 
       onContentChange: (listener) => {
         contentChangeSubscribersRef.current.add(listener);
@@ -8377,7 +7793,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         });
         if (overlapsTrackedChange) return false;
 
-        const revisionId = nextCommentId++;
+        const revisionId = nextRevisionIdRef.current++;
         const date = new Date().toISOString();
 
         const deletionMark = schema.marks.deletion.create({
@@ -8398,7 +7814,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         tr = tr.insert(to, fragment);
 
         view.dispatch(tr);
-        setShowCommentsSidebar(true);
+
         return true;
       },
 
@@ -8408,7 +7824,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         const { schema } = view.state;
         if (!schema.marks.deletion) return false;
 
-        const revisionId = nextCommentId++;
+        const revisionId = nextRevisionIdRef.current++;
         const date = new Date().toISOString();
 
         let tr = view.state.tr;
@@ -8445,7 +7861,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
 
         if (!anyApplied) return false;
         view.dispatch(tr);
-        setShowCommentsSidebar(true);
+
         return true;
       },
 
@@ -8458,7 +7874,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         const range = findParaIdRange(view.state.doc, options.paraId);
         if (!range) return false;
 
-        const revisionId = nextCommentId++;
+        const revisionId = nextRevisionIdRef.current++;
         const date = new Date().toISOString();
 
         const insertionMark = schema.marks.insertion.create({
@@ -8473,7 +7889,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
 
         const tr = view.state.tr.insert(range.to, newPara);
         view.dispatch(tr);
-        setShowCommentsSidebar(true);
+
         return true;
       },
 
@@ -8685,17 +8101,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       import: loadBuffer,
       export: handleSave,
       undo: () => {
-        if (externalContent) {
-          const view = getActiveEditorView();
-          return view ? (yUndoCommand(view.state, view.dispatch) ?? false) : false;
-        }
         return pagedEditorRef.current?.undo() ?? false;
       },
       redo: () => {
-        if (externalContent) {
-          const view = getActiveEditorView();
-          return view ? (yRedoCommand(view.state, view.dispatch) ?? false) : false;
-        }
         return pagedEditorRef.current?.redo() ?? false;
       },
       executeCommand: async (id, params) => {
@@ -8733,7 +8141,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     handleDirectPrint,
     loadParsedDocument,
     loadBuffer,
-    comments,
     extensionManager,
   ]);
 
@@ -9165,93 +8572,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     flexDirection: 'row',
   };
 
-  // --- Unified sidebar items ---
-  const commentCallbacksRef = useRef<CommentCallbacks>({});
-  commentCallbacksRef.current = {
-    onCommentReply: (id, text) => {
-      const reply = createComment(text, author, id);
-      const parent = comments.find((c) => c.id === id);
-      setComments((prev) => [...prev, reply]);
-      if (parent) onCommentReply?.(reply, parent);
-    },
-    onCommentResolve: (id) => {
-      const target = comments.find((c) => c.id === id);
-      setComments((prev) => prev.map((c) => (c.id === id ? { ...c, done: true } : c)));
-      // Collapse the card to its checkmark marker immediately. Resolving
-      // doesn't go through a PM transaction, so the cursor-based collapse
-      // path wouldn't fire; do it explicitly. Cascades into the highlight
-      // hide via resolvedIdsForRender.
-      if (expandedSidebarItem === `comment-${id}`) {
-        setExpandedSidebarItem(null);
-      }
-      if (target) onCommentResolve?.({ ...target, done: true });
-    },
-    onCommentUnresolve: (id) => {
-      setComments((prev) => prev.map((c) => (c.id === id ? { ...c, done: undefined } : c)));
-    },
-    onCommentDelete: (id) => {
-      const target = comments.find((c) => c.id === id);
-      setComments((prev) => prev.filter((c) => c.id !== id && c.parentId !== id));
-      // Remove the comment mark from PM to clear the yellow highlight
-      const view = pagedEditorRef.current?.getView();
-      if (view) {
-        const mark = view.state.schema.marks.comment?.create({ commentId: id });
-        if (mark) {
-          const tr = view.state.tr.removeMark(0, view.state.doc.content.size, mark);
-          if (tr.docChanged) view.dispatch(tr);
-        }
-      }
-      if (target) onCommentDelete?.(target);
-    },
-    onAddComment: (addText) => {
-      const comment = createComment(addText, author);
-      const view = pagedEditorRef.current?.getView();
-      if (view && commentSelectionRange) {
-        const { from, to } = commentSelectionRange;
-        const pendingMark = view.state.schema.marks.comment.create({
-          commentId: PENDING_COMMENT_ID,
-        });
-        const realMark = view.state.schema.marks.comment.create({
-          commentId: comment.id,
-        });
-        const tr = view.state.tr.removeMark(from, to, pendingMark).addMark(from, to, realMark);
-        view.dispatch(tr);
-      }
-      setComments((prev) => [...prev, comment]);
-      setIsAddingComment(false);
-      setCommentSelectionRange(null);
-      setAddCommentYPosition(null);
-      onCommentAdd?.(comment);
-    },
-    onCancelAddComment: () => {
-      const view = pagedEditorRef.current?.getView();
-      if (view && commentSelectionRange) {
-        const { from, to } = commentSelectionRange;
-        const pendingMark = view.state.schema.marks.comment.create({
-          commentId: PENDING_COMMENT_ID,
-        });
-        view.dispatch(view.state.tr.removeMark(from, to, pendingMark));
-      }
-      setIsAddingComment(false);
-      setCommentSelectionRange(null);
-      setAddCommentYPosition(null);
-    },
-    onAcceptChange: (from, to) => {
-      const view = pagedEditorRef.current?.getView();
-      if (view) acceptChange(from, to)(view.state, view.dispatch);
-      // No explicit re-extract: the dispatch fires `handleDocumentChange`,
-      // which mirrors the new PM state into `pmState` and `useTrackedChanges`
-      // re-derives.
-    },
-    onRejectChange: (from, to) => {
-      const view = pagedEditorRef.current?.getView();
-      if (view) rejectChange(from, to)(view.state, view.dispatch);
-    },
-    onTrackedChangeReply: (revisionId, text) => {
-      setComments((prev) => [...prev, createComment(text, author, revisionId)]);
-    },
-  };
-
   // Bulk tracked-change actions used by the suggesting-mode sidebar
   // header bar. Each command lives in @eigenpal/docx-core; this is just
   // a focus + scroll convenience wrapper.
@@ -9294,40 +8614,11 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     }
   }, []);
 
-  // Stable callbacks wrapper that delegates to ref (avoids recreating items on every render)
-  const stableCallbacks = useMemo<CommentCallbacks>(
-    () => ({
-      onCommentReply: (...args) => commentCallbacksRef.current.onCommentReply?.(...args),
-      onCommentResolve: (...args) => commentCallbacksRef.current.onCommentResolve?.(...args),
-      onCommentUnresolve: (...args) => commentCallbacksRef.current.onCommentUnresolve?.(...args),
-      onCommentDelete: (...args) => commentCallbacksRef.current.onCommentDelete?.(...args),
-      onAddComment: (...args) => commentCallbacksRef.current.onAddComment?.(...args),
-      onCancelAddComment: (...args) => commentCallbacksRef.current.onCancelAddComment?.(...args),
-      onAcceptChange: (...args) => commentCallbacksRef.current.onAcceptChange?.(...args),
-      onRejectChange: (...args) => commentCallbacksRef.current.onRejectChange?.(...args),
-      onTrackedChangeReply: (...args) =>
-        commentCallbacksRef.current.onTrackedChangeReply?.(...args),
-    }),
-    []
+  // Only host plugin items are rendered in the sidebar.
+  const allSidebarItems = useMemo(
+    () => pluginSidebarItems ?? [],
+    [pluginSidebarItems]
   );
-
-  const commentSidebarItems = useCommentSidebarItems({
-    comments,
-    trackedChanges: [],
-    callbacks: stableCallbacks,
-    showResolved: showCommentsSidebar,
-    isAddingComment: showCommentsSidebar ? isAddingComment : false,
-    addCommentYPosition,
-    currentAuthor: author,
-    mentionableUsers,
-  });
-
-  const allSidebarItems = useMemo(() => {
-    const items: ReactSidebarItem[] = [];
-    if (showCommentsSidebar) items.push(...commentSidebarItems);
-    if (pluginSidebarItems) items.push(...pluginSidebarItems);
-    return items;
-  }, [showCommentsSidebar, commentSidebarItems, pluginSidebarItems]);
 
   // Candidates for @-mention completion: host-provided list + current author
   const mentionSuggestions = useMemo(() => {
@@ -9344,25 +8635,13 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     return result;
   }, [mentionableUsers, author]);
 
-  // Build a map from insertion revisionIds to sidebar item IDs for replacement tracked changes.
-  // This allows clicking the insertion part of a replacement to activate the same sidebar card.
-  const revisionIdAliases = useMemo(() => {
-    const map = new Map<string, string>();
-    trackedChanges.forEach((change, idx) => {
-      if (change.type === 'replacement' && change.insertionRevisionId != null) {
-        map.set(String(change.insertionRevisionId), `tc-${change.revisionId}-${idx}`);
-      }
-    });
-    return map;
-  }, [trackedChanges]);
-
   // "Sidebar open" drives PagedEditor's left-translate so the centered
-  // page makes horizontal room for Comments and per-anchor plugin
+  // page makes horizontal room for per-anchor plugin
   // items, which both live inside PagedEditor's sidebarOverlay. Version
   // history is a flex sibling of the scroll container (see below) so
   // it reserves real horizontal space via the flex layout and doesn't
   // need the translate hack.
-  const sidebarOpen = showCommentsSidebar || allSidebarItems.length > 0;
+  const sidebarOpen = allSidebarItems.length > 0;
   // Reserve 2× the left-edge allowance so the centered page clears whatever
   // outline UI is showing, without forcing a shift on wide viewports.
   // Google-Docs-style centering: the page centers in the FULL window at every
@@ -9382,23 +8661,14 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     ? Math.round(sectionPropsPageWidth / 15)
     : DEFAULT_PAGE_WIDTH;
 
-  const resolvedCommentIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const c of comments) {
-      if (c.done && c.parentId == null) ids.add(c.id);
-    }
-    return ids;
-  }, [comments]);
-
-  // Exclude expanded resolved comment from hide-set so its text gets highlighted
-  const resolvedIdsForRender = useMemo(() => {
-    if (!expandedSidebarItem?.startsWith('comment-')) return resolvedCommentIds;
-    const expandedId = parseInt(expandedSidebarItem.slice(8), 10);
-    if (isNaN(expandedId) || !resolvedCommentIds.has(expandedId)) return resolvedCommentIds;
-    const ids = new Set(resolvedCommentIds);
-    ids.delete(expandedId);
-    return ids;
-  }, [resolvedCommentIds, expandedSidebarItem]);
+  const resolvedCommentIds = useMemo(
+    () => new Set(
+      (history.state?.package?.document?.comments ?? [])
+        .filter((comment) => comment.done && comment.parentId == null)
+        .map((comment) => comment.id)
+    ),
+    [history.state]
+  );
 
   const PREVIEW_CHANGE_NAV_BTN_STYLE: CSSProperties = {
     display: 'inline-flex',
@@ -9882,9 +9152,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                               </div>
                             )}
                             {/* Brighten highlight for the focused/expanded sidebar item */}
-                            {expandedSidebarItem && expandedSidebarItem.startsWith('comment-') && (
-                              <style>{`.paged-editor__pages [data-comment-id="${expandedSidebarItem.replace('comment-', '')}"] { background-color: rgba(255, 212, 0, 0.35) !important; border-bottom: 2px solid rgba(255, 212, 0, 0.7) !important; }`}</style>
-                            )}
                             {expandedSidebarItem?.startsWith('tc-') &&
                               (() => {
                                 const revId = expandedSidebarItem.split('-')[1];
@@ -9907,48 +9174,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                               if (view) {
                                 const selectionState = extractSelectionState(view.state);
                                 handleSelectionChange(selectionState);
-                                const $from = view.state.selection.$from;
-                                const marks = [
-                                  ...(view.state.storedMarks ?? []),
-                                  ...($from.nodeAfter?.marks ?? []),
-                                  ...($from.nodeBefore?.marks ?? []),
-                                  ...$from.marks(),
-                                ];
-                                let cursorSidebarItem: string | null = null;
-                                for (const mark of marks) {
-                                  if (
-                                    mark.type.name === 'comment' &&
-                                    mark.attrs.commentId != null
-                                  ) {
-                                    const commentId = mark.attrs.commentId as number;
-                                    if (resolvedCommentIds.has(commentId)) continue;
-                                    cursorSidebarItem = `comment-${commentId}`;
-                                    break;
-                                  }
-                                  if (
-                                    (mark.type.name === 'insertion' ||
-                                      mark.type.name === 'deletion') &&
-                                    mark.attrs.revisionId != null
-                                  ) {
-                                    const revId = String(mark.attrs.revisionId);
-                                    const prefix = `tc-${revId}-`;
-                                    let match = commentSidebarItems.find((i) =>
-                                      i.id.startsWith(prefix)
-                                    );
-                                    if (!match && revisionIdAliases) {
-                                      const aliasedId = revisionIdAliases.get(revId);
-                                      if (aliasedId) {
-                                        match = commentSidebarItems.find((i) => i.id === aliasedId);
-                                      }
-                                    }
-                                    if (match) {
-                                      cursorSidebarItem = match.id;
-                                      break;
-                                    }
-                                  }
-                                }
-                                if (cursorSidebarItem) setShowCommentsSidebar(true);
-                                setExpandedSidebarItem(cursorSidebarItem);
                               } else {
                                 handleSelectionChange(null);
                               }
@@ -9997,7 +9222,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                               commentsSidebarOpen={sidebarOpen}
                               onAnchorPositionsChange={setAnchorPositions}
                               onTotalPagesChange={handleTotalPagesChange}
-                              resolvedCommentIds={resolvedIdsForRender}
+                              resolvedCommentIds={resolvedCommentIds}
                               scrollContainerRef={scrollContainerRef}
                               sidebarOverlay={
                                 <>
@@ -10079,10 +9304,10 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                                       </Tooltip>
                                     </div>
                                   )}
-                                  {(allSidebarItems.length > 0 || showCommentsSidebar) && (
+                                  {(allSidebarItems.length > 0) && (
                                     <UnifiedSidebar
                                       items={allSidebarItems}
-                                      open={showCommentsSidebar}
+                                      open={sidebarOpen}
                                       anchorPositions={anchorPositions}
                                       renderedDomContext={pluginRenderedDomContext ?? null}
                                       pageWidth={pageWidthPx}
@@ -10454,11 +9679,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                         );
                       })()}
 
-                    {/* Comments use the anchored-cards approach (UnifiedSidebar
-                      paints a floating card next to each commented span).
-                      There is intentionally no solid docked comments panel —
-                      the empty-doc case is handled by a toast hint in
-                      handleToggleComments. */}
 
                     {/* AI right-side panels — laid out as flex siblings of
                       the scroll container so they share the exact same
@@ -11555,20 +10775,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                         path: t('toolbar.view'),
                         run: () => handleSetColorTheme('dark'),
                       },
-                      // Strict co-editing — only when a collab session wired the
-                      // plugin. Mirrors OnlyOffice's Fast/Strict co-editing mode.
-                      ...(strictCoEditAvailable
-                        ? [
-                            {
-                              id: 'view.strictCoEditing',
-                              label: strictCoEditEnabled
-                                ? t('commandPalette.strictCoEditingOn')
-                                : t('commandPalette.strictCoEditingOff'),
-                              path: t('toolbar.view'),
-                              run: handleToggleStrictCoEditing,
-                            },
-                          ]
-                        : []),
 
                       {
                         id: 'insert.pageBreak',
@@ -11712,14 +10918,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                         path: t('toolbar.view'),
                         shortcut: '⌘⇧H',
                         run: handleToggleOutline,
-                      },
-                      {
-                        id: 'view.showComments',
-                        label: showCommentsSidebar
-                          ? t('commandPalette.hideComments')
-                          : t('commandPalette.showComments'),
-                        path: t('toolbar.view'),
-                        run: handleToggleComments,
                       },
                       {
                         id: 'view.showVersionHistory',

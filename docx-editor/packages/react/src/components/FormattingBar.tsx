@@ -376,9 +376,13 @@ export function FormattingBar(explicitProps: FormattingBarProps) {
 
   // wesker
   const handleWheel = (e: WheelEvent<HTMLDivElement>) => {
-    const el = e.currentTarget
-    el.scrollLeft += e.deltaY
-  }
+    const el = e.currentTarget;
+    // React portal events bubble through the component tree even though popup
+    // content lives outside the bar. Let those menus handle their own scrolling.
+    if (!el.contains(e.target as Node) || e.ctrlKey || e.metaKey) return;
+
+    el.scrollLeft += e.deltaY;
+  };
 
   // ── Render ────────────────────────────────────────────────────────────
 
@@ -397,7 +401,7 @@ export function FormattingBar(explicitProps: FormattingBarProps) {
       data-testid={inline ? undefined : 'formatting-bar'}
       onMouseDown={inline ? undefined : handleBarMouseDown}
       onMouseUp={inline ? undefined : handleBarMouseUp}
-      onWheel={handleWheel}
+      onWheel={inline ? undefined : handleWheel}
     >
       {startItems}
       

@@ -170,30 +170,6 @@ export const DOCOPS_CATALOG: DocOpsTool[] = [
       required: ['paraId', 'styleId'],
     },
   },
-  {
-    name: 'add_comment',
-    description:
-      'Add a review comment anchored to a paragraph (optionally to a specific phrase within it). The comment appears in the comments sidebar.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        paraId: {
-          type: 'string',
-          description: 'Stable block ID of the paragraph.',
-        },
-        text: {
-          type: 'string',
-          description: 'The comment text.',
-        },
-        search: {
-          type: 'string',
-          description:
-            'Optional: a unique phrase in the paragraph to anchor the comment to. Omit to anchor to the whole paragraph.',
-        },
-      },
-      required: ['paraId', 'text'],
-    },
-  },
   // ── Phase 3: composite tools ──────────────────────────────────────────────
   {
     name: 'get_block',

@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /*
  * Copyright (c) 2026 Casual Office. All rights reserved.
  */
@@ -5017,7 +5018,6 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
         window.document.fonts.removeEventListener('loadingdone', handleFontsLoaded);
         if (debounceTimer !== null) clearTimeout(debounceTimer);
       };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Re-layout when header/footer content changes (e.g., after HF editor save).

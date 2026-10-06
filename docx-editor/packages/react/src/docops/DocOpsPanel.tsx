@@ -140,7 +140,7 @@ Write tools — direct edits (immediately visible):
 - insert_toc — inserts at the cursor position
 
 Write tools — suggestion mode (user reviews in the sidebar):
-- suggest_text_change, set_paragraph_style, add_comment, rewrite_selection (call get_selection first), delete_paragraphs (pass paraIds from get_outline/find_text), insert_paragraph_after, harmonize_styles (call list_styles first), insert_report_from_data, create_document (call get_doc_stats first, confirm wordCount === 0)
+- suggest_text_change, set_paragraph_style, rewrite_selection (call get_selection first), delete_paragraphs (pass paraIds from get_outline/find_text), insert_paragraph_after, harmonize_styles (call list_styles first), insert_report_from_data, create_document (call get_doc_stats first, confirm wordCount === 0)
 
 Rules:
 - To summarize, describe, or answer ANY question about the document, your VERY FIRST response must be a <tool_call> for search_document with a query built from the user's request. Do not write prose first. Do not ask the user to do anything. Do not assume or invent the document's content.
@@ -1564,7 +1564,6 @@ const TOOL_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {
   insert_toc: 'docops.toolLabels.insertToc',
   suggest_text_change: 'docops.toolLabels.suggestTextChange',
   set_paragraph_style: 'docops.toolLabels.setParagraphStyle',
-  add_comment: 'docops.toolLabels.addComment',
   rewrite_selection: 'docops.toolLabels.rewriteSelection',
   delete_paragraphs: 'docops.toolLabels.deleteParagraphs',
   insert_paragraph_after: 'docops.toolLabels.insertParagraphAfter',

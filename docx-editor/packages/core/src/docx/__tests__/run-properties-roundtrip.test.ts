@@ -24,10 +24,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { parseDocx, repackDocx } from '../index';
 
-const FIXTURE_DIR = new URL('../../../../../e2e/fixtures/', import.meta.url).pathname;
+const FIXTURE_DIR = fileURLToPath(new URL('../../../../../e2e/fixtures/', import.meta.url));
 
 async function tagCounts(
   buf: Buffer | Uint8Array,

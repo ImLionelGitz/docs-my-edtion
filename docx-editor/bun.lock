@@ -122,10 +122,8 @@
         "katex": "^0.17.0",
         "nspell": "^2.1.5",
         "sonner": "^2.0.7",
-        "y-indexeddb": "^9.0.12",
       },
       "devDependencies": {
-        "@hocuspocus/provider": "^2.15.0",
         "@schnsrw/design-system": "file:../../vendor/design-system",
         "@types/katex": "^0.16.8",
         "fake-indexeddb": "^6",
@@ -138,12 +136,8 @@
         "prosemirror-tables": "^1.8.5",
         "prosemirror-transform": "^1.10.2",
         "prosemirror-view": "^1.41.6",
-        "y-prosemirror": "^1.2.0",
-        "y-websocket": "^2.0.0",
-        "yjs": "^13.6.0",
       },
       "peerDependencies": {
-        "@hocuspocus/provider": "^2.15.0",
         "prosemirror-commands": "^1.5.2",
         "prosemirror-dropcursor": "^1.8.2",
         "prosemirror-history": "^1.4.0",
@@ -155,17 +149,10 @@
         "prosemirror-view": "^1.41.6",
         "react": "^18.0.0 || ^19.0.0",
         "react-dom": "^18.0.0 || ^19.0.0",
-        "y-prosemirror": "^1.2.0",
-        "y-websocket": "^2.0.0",
-        "yjs": "^13.6.0",
       },
       "optionalPeers": [
-        "@hocuspocus/provider",
         "react",
         "react-dom",
-        "y-prosemirror",
-        "y-websocket",
-        "yjs",
       ],
     },
     "packages/vue": {
@@ -1847,8 +1834,6 @@
     "xtend": ["xtend@4.0.2", "", {}, "sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ=="],
 
     "y-codemirror.next": ["y-codemirror.next@0.3.5", "", { "dependencies": { "lib0": "^0.2.42" }, "peerDependencies": { "@codemirror/state": "^6.0.0", "@codemirror/view": "^6.0.0", "yjs": "^13.5.6" } }, "sha512-VluNu3e5HfEXybnypnsGwKAj+fKLd4iAnR7JuX1Sfyydmn1jCBS5wwEL/uS04Ch2ib0DnMAOF6ZRR/8kK3wyGw=="],
-
-    "y-indexeddb": ["y-indexeddb@9.0.12", "", { "dependencies": { "lib0": "^0.2.74" }, "peerDependencies": { "yjs": "^13.0.0" } }, "sha512-9oCFRSPPzBK7/w5vOkJBaVCQZKHXB/v6SIT+WYhnJxlEC61juqG0hBrAf+y3gmSMLFLwICNH9nQ53uscuse6Hg=="],
 
     "y-leveldb": ["y-leveldb@0.1.2", "", { "dependencies": { "level": "6.0.1", "lib0": "0.2.117" }, "peerDependencies": { "yjs": "13.6.30" } }, "sha512-6ulEn5AXfXJYi89rXPEg2mMHAyyw8+ZfeMMdOtBbV8FJpQ1NOrcgi6DTAcXof0dap84NjHPT2+9d0rb6cFsjEg=="],
 

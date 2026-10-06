@@ -1,3 +1,6 @@
+/* eslint-disable no-console */
+/* eslint-disable react-hooks/exhaustive-deps */
+/* eslint-disable react-hooks/rules-of-hooks */
 /*
  * Copyright (c) 2026 Casual Office. All rights reserved.
  */
@@ -8,15 +11,8 @@ import {
   type DocxEditorRef,
   type Document as DocxDocument,
   createEmptyDocument,
-  PresenceCluster,
   useTranslation,
 } from '@casualoffice/docs';
-import { useCollab } from './collab/useCollab';
-import { StatusBadge } from './collab/StatusBadge';
-import { ShareDialog } from './collab/Share';
-import { LoadingPanel } from './collab/LoadingPanel';
-import { ErrorPanel } from './collab/ErrorPanel';
-import { DisconnectedBanner } from './collab/DisconnectedBanner';
 import {
   AutosaveStatus,
   PersonalAuthGate,
@@ -31,7 +27,6 @@ import {
 } from '@casualoffice/docs';
 import { Home } from './Home';
 import { MarkdownEditor } from './markdown/MarkdownEditor';
-import { MarkdownCollabApp } from './markdown/MarkdownCollabApp';
 import { RtfViewer } from './viewers/RtfViewer';
 import { EmlViewer } from './viewers/EmlViewer';
 import { loadTemplate } from './templates/loader';
@@ -500,22 +495,6 @@ export function App() {
     []
   );
 
-  // Read `?commentIdBase=N` so Playwright tests can drive issue #257
-  // collab-peer partitioning without a separate test harness.
-  const commentIdBase = useMemo(() => {
-    const raw = new URLSearchParams(window.location.search).get('commentIdBase');
-    if (raw == null) return undefined;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : undefined;
-  }, []);
-
-  // Read `?wordCompat=1` so the e2e for #395 can flip the Word-style
-  // closing-border heuristic without a separate test harness.
-  const wordCompat = useMemo(
-    () => new URLSearchParams(window.location.search).get('wordCompat') === '1',
-    []
-  );
-
   // Dev/e2e affordance: `?chrome=embedded|minimal|none|full` exercises the
   // chrome presets (doc 39 embedded-mode contract) without a separate harness.
   // Absent → undefined → the editor's default full shell (unchanged behavior).
@@ -525,96 +504,6 @@ export function App() {
       ? (c as 'embedded' | 'minimal' | 'none' | 'full')
       : undefined;
   }, []);
-
-  // Collab is only available when the build has a real collab server
-  // to talk to. The Pages demo builds with this off because there's no
-  // collab server behind doc.schnsrw.live; the Docker image and local
-  // dev builds set VITE_COLLAB_ENABLED=true. Hiding the Share button in
-  // the disabled case prevents the user from hitting a dead /api/rooms
-  // POST and having no idea why.
-  const collabEnabled = false;
-
-  const collabParams = useMemo(() => {
-    // Desktop is offline-first — never enter a collab room there.
-    if (isDesktop || !collabEnabled) return null;
-    const params = new URLSearchParams(window.location.search);
-    const room = params.get('room');
-    if (!room) return null;
-    // Collab WS endpoint on the shared CasualOffice collab server
-    // (Hocuspocus). Same origin as the `/api/rooms` REST surface
-    // (`collabHttp`), just over ws(s). Order:
-    //   ?collab=ws(s)://…  →  VITE_COLLAB_BACKEND  →  ?backend=  →  same-origin
-    const env = (import.meta as { env?: Record<string, string> }).env?.VITE_COLLAB_BACKEND;
-    let backend = params.get('collab') || env || params.get('backend');
-    if (!backend) {
-      // Same-origin default — production: a reverse proxy routes
-      // `/yjs` to the collab server (Hocuspocus) and everything else
-      // to the gateway, so the share URL doesn't need to carry the WS
-      // URL explicitly. The `/yjs` path is required — that's the
-      // Hocuspocus upgrade route on the collab server.
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      backend = `${proto}//${window.location.host}/yjs`;
-    }
-    // `?kind=text` (or `markdown`) opens the collaborative source/markdown
-    // editor instead of the DOCX surface for this room. Default is DOCX.
-    const kindParam = params.get('kind');
-    const kind: 'docx' | 'markdown' | 'text' =
-      kindParam === 'text' ? 'text' : kindParam === 'markdown' ? 'markdown' : 'docx';
-    return { room, backend, kind };
-  }, [isDesktop, collabEnabled]);
-
-  // Collab server endpoints — the share-link + seed flow lives on the
-  // Node CasualOffice/collab server (Hocuspocus + its `/api/rooms` REST
-  // surface), NOT the legacy Go gateway.
-  //
-  // `collabWs` is the Hocuspocus WS the share URL embeds; `collabHttp`
-  // is that same origin over http(s) for the `/api/rooms` REST calls
-  // (room create + seed upload/download). Resolution order:
-  //   1. ?collab= / ?backend= in the URL → set by the share-link generator.
-  //   2. VITE_COLLAB_BACKEND env at build time → Vite dev story where the
-  //      editor is on :5173 and collab on :1234.
-  //   3. same-origin `/yjs` → production: a reverse proxy routes `/yjs`
-  //      to the collab server, so the share URL needn't carry it.
-  const collabWs = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    const env = (import.meta as { env?: Record<string, string> }).env?.VITE_COLLAB_BACKEND;
-    const ws = params.get('collab') || env || params.get('backend');
-    if (ws) return ws;
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}/yjs`;
-  }, []);
-  const collabHttp = useMemo(
-    () =>
-      collabWs
-        .replace(/^wss:/, 'https:')
-        .replace(/^ws:/, 'http:')
-        .replace(/\/yjs\/?$/, ''),
-    [collabWs]
-  );
-
-  // Local-user identity for awareness. M2 will prompt for a name +
-  // colour; M1 ships an anonymous fallback so co-edit works
-  // immediately. Stored in sessionStorage so the same browser tab
-  // keeps a stable colour across reloads.
-  const localUser = useMemo(() => {
-    const stored = sessionStorage.getItem('collab-user');
-    if (stored) {
-      try {
-        return JSON.parse(stored) as { name: string; color: string };
-      } catch {
-        /* fall through */
-      }
-    }
-    const palette = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#9333ea', '#0891b2'];
-    const user = {
-      name: `Editor ${Math.floor(Math.random() * 1000)}`,
-      color: palette[Math.floor(Math.random() * palette.length)] ?? '#2563eb',
-    };
-    sessionStorage.setItem('collab-user', JSON.stringify(user));
-    return user;
-  }, []);
-
-  const [shareOpen, setShareOpen] = useState(false);
 
   // Under `?e2e=1`, expose the editor ref on window so Playwright can
   // call addComment/getComments/findInDocument programmatically. Off by
@@ -794,7 +683,6 @@ export function App() {
     setFileName('Untitled.docx');
     // Initial-mount only; subsequent transitions to editor go through
     // handleSelectTemplate / handleOpenFile which set the doc themselves.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // File → New still creates a blank doc in place — preserves muscle
@@ -951,15 +839,6 @@ export function App() {
     [legacyForcedEditor]
   );
 
-  const handleFileSelect = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      await handleOpenFromHome(file);
-    },
-    [handleOpenFromHome]
-  );
-
   // --- Desktop crash-recovery -----------------------------------------------
   // On a debounced schedule after edits, serialize the current document to
   // .docx bytes and hand them to the host's recovery sidecar. Uses the agent's
@@ -1009,69 +888,6 @@ export function App() {
     const bridge = typeof window !== 'undefined' ? window.__deskApp__ : undefined;
     bridge?.clearRecovery?.().catch(() => undefined);
   }, []);
-
-  const handleSave = useCallback(async () => {
-    if (!editorRef.current) return;
-    try {
-      setStatus(t('titleBar.saving'));
-      const buffer = await editorRef.current.save();
-      if (!buffer) return;
-      const bridge = typeof window !== 'undefined' ? window.__deskApp__ : undefined;
-      if (bridge?.isDesktop) {
-        const written = await bridge.save(buffer);
-        const name = written.split(/[\\/]/).pop();
-        if (name) setFileName(name);
-        clearRecovery();
-        setStatus(t('unsaved.saved'));
-        setTimeout(() => setStatus(''), 1500);
-        return;
-      }
-      // Web fallback: browser download.
-      const blob = new Blob([buffer], {
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName || 'document.docx';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setStatus(t('app.statusSavedBang'));
-      setTimeout(() => setStatus(''), 2000);
-    } catch (err) {
-      console.error('save failed', err);
-      setStatus(t('app.statusSaveFailed'));
-    }
-  }, [fileName, clearRecovery, t]);
-
-  const handleSaveAs = useCallback(async () => {
-    if (!editorRef.current) return;
-    const bridge = typeof window !== 'undefined' ? window.__deskApp__ : undefined;
-    if (!bridge?.isDesktop) {
-      // No native Save As on web — fall through to Save (which downloads).
-      return handleSave();
-    }
-    try {
-      setStatus(t('titleBar.saving'));
-      const buffer = await editorRef.current.save();
-      if (!buffer) return;
-      const written = await bridge.saveAs(fileName || 'Untitled.docx', buffer);
-      if (written) {
-        const name = written.split(/[\\/]/).pop();
-        if (name) setFileName(name);
-        clearRecovery();
-        setStatus(t('unsaved.saved'));
-        setTimeout(() => setStatus(''), 1500);
-      } else {
-        setStatus('');
-      }
-    } catch (err) {
-      console.error('saveAs failed', err);
-      setStatus(t('app.statusSaveAsFailed'));
-    }
-  }, [fileName, handleSave, clearRecovery, t]);
 
   // Local-user profile shown in the title bar (replaces the Share
   // button slot when running inside Casual Office). Fetched once on
@@ -1360,17 +1176,6 @@ export function App() {
   const renderTitleBarRight = useCallback(
     () => (
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        {/* Collab Share is gated by collabEnabled AND not in desktop
-            mode (Casual Office is single-user). Open / Save / New live in
-            the File menu, driven by <DocxEditor>'s internal handlers. */}
-        {collabEnabled && !isDesktop && (
-          <button
-            style={{ ...styles.button, background: '#2563eb', color: '#fff', border: 'none' }}
-            onClick={() => setShareOpen(true)}
-          >
-            {t('app.share')}
-          </button>
-        )}
         {/* Local-user chip in place of Share when running in Casual
             Office. Click is informational; profile edits live in the
             launcher window's Settings panel. */}
@@ -1417,45 +1222,8 @@ export function App() {
         {status && <span style={styles.status}>{status}</span>}
       </div>
     ),
-    [status, collabEnabled, isDesktop, deskProfile, t]
+    [status, isDesktop, deskProfile, t]
   );
-
-  // Collab mode is a hard fork: the editor binds to a Y.Doc fed by
-  // the WS provider, and the in-app open/save/new flow is hidden
-  // (everyone shares one source of truth — the gateway). Rendered
-  // by a child component so useCollab is always called when its
-  // mounting condition is true.
-  if (collabParams && collabParams.kind !== 'docx') {
-    return (
-      <MarkdownCollabApp
-        room={collabParams.room}
-        backend={collabParams.backend}
-        user={localUser}
-        kind={collabParams.kind}
-        onBack={handleGoHome}
-        renderLogo={renderLogo}
-      />
-    );
-  }
-
-  if (collabParams) {
-    return (
-      <CollabApp
-        editorRef={editorRef}
-        room={collabParams.room}
-        backend={collabParams.backend}
-        collabHttp={collabHttp}
-        author={randomAuthor}
-        zoom={autoZoom}
-        isMobile={isMobile}
-        commentIdBase={commentIdBase}
-        disableFindReplaceShortcuts={disableFindReplaceShortcuts}
-        user={localUser}
-        onError={handleError}
-        onFontsLoaded={handleFontsLoaded}
-      />
-    );
-  }
 
   if (view === 'home') {
     return (
@@ -1602,8 +1370,6 @@ export function App() {
           showZoomControl={true}
           initialZoom={autoZoom}
           disableFindReplaceShortcuts={disableFindReplaceShortcuts}
-          commentIdBase={commentIdBase}
-          wordCompat={wordCompat}
           documentName={fileName}
           onDocumentNameChange={handleDocumentNameChange}
           onNew={handleNewDocument}
@@ -1634,203 +1400,6 @@ export function App() {
           onEditorViewReady={isDesktop ? handleEditorViewReady : undefined}
         />
       </main>
-      <ShareDialog
-        open={shareOpen}
-        documentBuffer={documentBuffer}
-        fileName={fileName}
-        collabHttp={collabHttp}
-        backendWs={collabWs}
-        onClose={() => setShareOpen(false)}
-      />
     </div>
   );
-}
-
-/**
- * CollabApp — the read/write-shared edition. Renders the same
- * <DocxEditor> but feeds it a Y.Doc-backed ProseMirror state via
- * `externalPlugins` + `externalContent`. The first joiner's
- * room seed (via /api/rooms/{id}/seed) seeds the doc; subsequent
- * joiners get it through the WS broker. Title-bar UI is trimmed —
- * open/new make no sense when everyone shares one source.
- */
-interface CollabAppProps {
-  editorRef: React.RefObject<DocxEditorRef | null>;
-  room: string;
-  backend: string;
-  collabHttp: string;
-  author: string;
-  zoom: number;
-  isMobile: boolean;
-  commentIdBase: number | undefined;
-  disableFindReplaceShortcuts: boolean;
-  user: { name: string; color: string };
-  onError: (err: Error) => void;
-  onFontsLoaded: () => void;
-}
-
-// Seed-fetch state. Loading is the default until the gateway hands
-// back the original .docx bytes; without those there's nothing for
-// the editor (and therefore for ySyncPlugin) to paint.
-type SeedState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; buffer: ArrayBuffer; fileName: string }
-  | { kind: 'error'; message: string };
-
-function CollabApp({
-  editorRef,
-  room,
-  backend,
-  collabHttp,
-  author,
-  zoom,
-  isMobile,
-  commentIdBase,
-  disableFindReplaceShortcuts,
-  user,
-  onError,
-  onFontsLoaded,
-}: CollabAppProps) {
-  const { plugins, status, peers, metaMap } = useCollab({ room, backend, user });
-  const [seed, setSeed] = useState<SeedState>({ kind: 'loading' });
-  // Bumped via "Try again" to re-trigger the fetch effect.
-  const [attempt, setAttempt] = useState(0);
-  // Live filename — initialised from the server-seeded value, then
-  // tracked through the shared Y.Map so renames propagate across
-  // peers in real time. `null` until the seed download completes.
-  const [collabFileName, setCollabFileName] = useState<string | null>(null);
-
-  // Observe metaMap.fileName so a peer's rename updates our title
-  // bar without any HTTP round-trip — same channel the editor
-  // content already syncs through.
-  useEffect(() => {
-    const apply = () => {
-      const v = metaMap.get('fileName');
-      if (typeof v === 'string' && v.length > 0) setCollabFileName(v);
-    };
-    apply();
-    metaMap.observe(apply);
-    return () => {
-      metaMap.unobserve(apply);
-    };
-  }, [metaMap]);
-
-  // When the user renames locally, write into metaMap → Yjs fans the
-  // change to every peer. The Y.Doc is the single source of truth for
-  // the filename: live peers update immediately, and new joiners read
-  // `fileName` from the synced meta map on connect — so no server-side
-  // rename call is needed (the collab room seed is just the starting
-  // bytes; it carries no canonical name).
-  const handleRename = useCallback(
-    (newName: string) => {
-      const trimmed = newName.trim();
-      if (!trimmed) return;
-      if (metaMap.get('fileName') !== trimmed) {
-        metaMap.set('fileName', trimmed);
-      }
-    },
-    [metaMap]
-  );
-
-  // Fetch the seed .docx for this room. Every joiner does this on
-  // mount — ySyncPlugin reconciles divergent loads (the first
-  // joiner's PM → Y.Doc capture wins, subsequent joiners' loads
-  // get overwritten by the Y.Doc state during plugin init).
-  useEffect(() => {
-    let cancelled = false;
-    setSeed({ kind: 'loading' });
-
-    fetch(`${collabHttp}/api/rooms/${encodeURIComponent(room)}/seed`)
-      .then(async (res) => {
-        if (!res.ok) {
-          const text = await res.text().catch(() => '');
-          throw new Error(text || `HTTP ${res.status}`);
-        }
-        const fromHeader = parseFileNameFromDisposition(res.headers.get('Content-Disposition'));
-        const buffer = await res.arrayBuffer();
-        // The room seed carries no canonical name; the live Y.Doc meta
-        // map provides it once Hocuspocus sync completes. Fall back to
-        // the room id until then.
-        return { buffer, fileName: fromHeader ?? `${room}.docx` };
-      })
-      .then(({ buffer, fileName }) => {
-        if (cancelled) return;
-        setSeed({ kind: 'ready', buffer, fileName });
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : String(err);
-        setSeed({ kind: 'error', message });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [collabHttp, room, attempt]);
-
-  const renderTitleBarRight = useCallback(
-    () => (
-      <PresenceCluster
-        peers={peers.map((p) => ({ name: p.name, color: p.color, active: true }))}
-        status={status}
-        onShare={() => {
-          void navigator.clipboard.writeText(window.location.href);
-        }}
-      />
-    ),
-    [peers, status]
-  );
-
-  if (seed.kind === 'loading') {
-    return <LoadingPanel />;
-  }
-
-  if (seed.kind === 'error') {
-    return <ErrorPanel error={seed.message} onRetry={() => setAttempt((n) => n + 1)} />;
-  }
-
-  return (
-    <div style={styles.container}>
-      <DisconnectedBanner status={status} />
-      <main style={styles.main}>
-        <DocxEditor
-          ref={editorRef}
-          documentBuffer={seed.buffer}
-          externalPlugins={plugins}
-          author={author}
-          onError={onError}
-          onFontsLoaded={onFontsLoaded}
-          showToolbar={true}
-          showRuler={!isMobile}
-          showZoomControl={true}
-          initialZoom={zoom}
-          disableFindReplaceShortcuts={disableFindReplaceShortcuts}
-          commentIdBase={commentIdBase}
-          documentName={collabFileName ?? seed.fileName}
-          onDocumentNameChange={handleRename}
-          renderTitleBarRight={renderTitleBarRight}
-        />
-      </main>
-      <StatusBadge status={status} peers={peers} />
-    </div>
-  );
-}
-
-// Pull a filename out of a Content-Disposition header, handling
-// both `filename="..."` and the RFC 5987 `filename*=UTF-8''...`
-// form the gateway emits. Returns undefined on anything we can't
-// confidently parse.
-function parseFileNameFromDisposition(header: string | null): string | undefined {
-  if (!header) return undefined;
-  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
-  if (star && star[1]) {
-    try {
-      return decodeURIComponent(star[1]);
-    } catch {
-      /* fall through */
-    }
-  }
-  const plain = /filename="?([^";]+)"?/i.exec(header);
-  if (plain && plain[1]) return plain[1];
-  return undefined;
 }
