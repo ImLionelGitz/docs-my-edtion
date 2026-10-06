@@ -315,10 +315,7 @@ import { ExtensionManager } from '@eigenpal/docx-core/prosemirror/extensions';
 import {
   createSuggestionModePlugin,
   setSuggestionMode,
-  createMentionPlugin,
-  MENTION_PLUGIN_KEY,
 } from '@eigenpal/docx-core/prosemirror/plugins';
-import { MentionPopover } from './ui/MentionPopover';
 
 // Conversion (for HF inline editor save + version-history preview)
 import { proseDocToBlocks, fromProseDoc } from '@eigenpal/docx-core/prosemirror/conversion';
@@ -543,10 +540,6 @@ export interface DocxEditorProps {
   onOpenSourceFile?: (file: File) => boolean | Promise<boolean>;
   /** Author name used for tracked changes */
   author?: string;
-  /** People the host (e.g. Drive) knows about, surfaced in the comment
-   *  @-mention typeahead so collaborators who haven't commented yet are still
-   *  mentionable. When omitted, only historical comment authors are suggested. */
-  mentionableUsers?: readonly string[];
   /** Callback when document changes */
   onChange?: (document: Document) => void;
   /** Callback when selection changes */
@@ -1608,7 +1601,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onOpenSourceFile,
     onExportPdf,
     author = 'User',
-    mentionableUsers,
     onChange,
     onSelectionChange,
     onError,
@@ -1880,12 +1872,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   } | null>(null);
   const [previewShowChanges, setPreviewShowChanges] = useState(true);
   const [showProperties, setShowProperties] = useState(false);
-  // @-mention popover state (body editor only)
-  const [mentionPopover, setMentionPopover] = useState<{
-    visible: boolean;
-    anchor: { top: number; bottom: number; left: number } | null;
-    query: string;
-  }>({ visible: false, anchor: null, query: '' });
   // Footnote text editor (opened by double-clicking a footnote at page bottom).
   const [noteEdit, setNoteEdit] = useState<{
     kind: 'footnote' | 'endnote';
@@ -2128,8 +2114,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     [findHighlightKey]
   );
 
-  const mentionPlugin = useMemo(() => createMentionPlugin(), []);
-
   const allExternalPlugins = useMemo(
     () =>
       // Host `editorExtensions` (docs#273) layer on top of the built-ins and the
@@ -2140,7 +2124,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           suggestionPlugin,
           markdownHeadingPlugin,
           findHighlightPlugin,
-          mentionPlugin,
           ...(externalPlugins ?? []),
         ],
         editorExtensions
@@ -2150,7 +2133,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       suggestionPlugin,
       markdownHeadingPlugin,
       findHighlightPlugin,
-      mentionPlugin,
       externalPlugins,
       editorExtensions,
     ]
@@ -3235,30 +3217,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       if (view) {
         const { from, to } = view.state.selection;
         lastSelectionRef.current = { from, to };
-      }
-
-      // @-mention popover: read plugin state, anchor to the painted caret element
-      // (the hidden PM is off-screen at left:-9999px so coordsAtPos gives wrong coords).
-      if (view) {
-        const ms = MENTION_PLUGIN_KEY.getState(view.state);
-        if (ms?.active) {
-          // The visible caret DIV ([data-testid="caret"]) is positioned by the
-          // layout painter at the real on-screen cursor location.
-          const caretEl =
-            view.dom.ownerDocument.querySelector<HTMLElement>('[data-testid="caret"]');
-          if (caretEl) {
-            const r = caretEl.getBoundingClientRect();
-            setMentionPopover({
-              visible: true,
-              anchor: { top: r.top, bottom: r.bottom, left: r.left },
-              query: ms.query,
-            });
-          }
-        } else {
-          setMentionPopover((prev) =>
-            prev.visible ? { visible: false, anchor: null, query: '' } : prev
-          );
-        }
       }
 
       // Also check table context from ProseMirror
@@ -5570,20 +5528,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     if (view) refreshSpellcheckDecorations(view);
     setSpellMenu(null);
   }, [getActiveEditorView, spellMenu]);
-
-  // Pick a name from the @-mention popover: replace "@query" with "@Name "
-  const handlePickMention = useCallback((name: string) => {
-    const view = pagedEditorRef.current?.getView();
-    if (!view) return;
-    const ms = MENTION_PLUGIN_KEY.getState(view.state);
-    if (!ms?.active) return;
-    const { from } = ms;
-    const to = view.state.selection.from; // cursor is right after the query
-    const text = `@${name} `;
-    view.dispatch(view.state.tr.insertText(text, from, to));
-    view.focus();
-    setMentionPopover({ visible: false, anchor: null, query: '' });
-  }, []);
 
   // Apply a grammar fix: replace the flagged span with the suggestion,
   // preserving the marks at the start so formatting survives.
@@ -8620,21 +8564,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     [pluginSidebarItems]
   );
 
-  // Candidates for @-mention completion: host-provided list + current author
-  const mentionSuggestions = useMemo(() => {
-    const seen = new Set<string>();
-    const result: string[] = [];
-    const push = (n: string) => {
-      if (n && !seen.has(n)) {
-        seen.add(n);
-        result.push(n);
-      }
-    };
-    if (mentionableUsers) for (const n of mentionableUsers) push(n);
-    if (author) push(author);
-    return result;
-  }, [mentionableUsers, author]);
-
   // "Sidebar open" drives PagedEditor's left-translate so the centered
   // page makes horizontal room for per-anchor plugin
   // items, which both live inside PagedEditor's sidebarOverlay. Version
@@ -10130,16 +10059,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                     })
                     .finally(() => setAskAiBusy(false));
                 }}
-              />
-
-              {/* @-mention popover */}
-              <MentionPopover
-                visible={mentionPopover.visible}
-                anchor={mentionPopover.anchor}
-                suggestions={mentionSuggestions}
-                query={mentionPopover.query}
-                onPick={handlePickMention}
-                onDismiss={() => setMentionPopover({ visible: false, anchor: null, query: '' })}
               />
 
               {/* Toast notifications */}
